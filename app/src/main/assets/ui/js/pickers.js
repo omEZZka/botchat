@@ -170,6 +170,14 @@ const Pickers = (() => {
         class: 'btn full', text: 'Экспорт всех чатов',
         onclick: () => exportData('chats'),
       }),
+      U.el('button', {
+        class: 'btn full', text: 'Шифрованный бэкап',
+        onclick: () => { Render.closeSheet(); encryptedBackup(); },
+      }),
+      U.el('button', {
+        class: 'btn full', text: 'Восстановить из бэкапа',
+        onclick: () => { Render.closeSheet(); restoreBackup(); },
+      }),
       U.el('p', { class: 'muted small', text: 'Ключи API никогда не попадают в экспорт и бэкап.' }),
     ]);
     Render.openSheet({ title: 'Экспорт и бэкап', content });
@@ -188,6 +196,71 @@ const Pickers = (() => {
       Render.toast(res && res.ok ? 'Файл сохранён' : 'Не удалось сохранить');
     }
     Render.closeSheet();
+  };
+
+  const encryptedBackup = () => {
+    const password = U.el('input', { class: 'field', type: 'password', placeholder: 'пароль (мин. 6 символов)' });
+    const repeat = U.el('input', { class: 'field', type: 'password', placeholder: 'повторите пароль' });
+    const content = U.el('div', { class: 'confirm' }, [
+      U.el('p', { class: 'muted small', text: 'Бэкап шифруется AES-GCM (PBKDF2). Пароль не сохраняется: без него архив не восстановить.' }),
+      password,
+      repeat,
+      U.el('button', {
+        class: 'btn primary', text: 'Создать архив',
+        onclick: async () => {
+          if (password.value.length < 6) { Render.toast('Пароль минимум 6 символов'); return; }
+          if (password.value !== repeat.value) { Render.toast('Пароли не совпадают'); return; }
+          const payload = {
+            password: password.value,
+            chats: collectChats(),
+          };
+          const res = await Native.api('backup.export', payload);
+          Render.closeSheet();
+          Render.toast(res && res.ok ? 'Бэкап сохранён' : 'Не удалось сохранить');
+        },
+      }),
+    ]);
+    Render.openSheet({ title: 'Шифрованный бэкап', content });
+  };
+
+  const restoreBackup = () => {
+    const text = U.el('textarea', { class: 'field textarea', rows: 6, placeholder: 'вставьте содержимое архива' });
+    const password = U.el('input', { class: 'field', type: 'password', placeholder: 'пароль (если архив шифрован)' });
+    const content = U.el('div', { class: 'confirm' }, [
+      U.el('p', { class: 'muted small', text: 'Импорт настроек. Повреждённый архив не изменит профиль.' }),
+      text,
+      password,
+      U.el('button', {
+        class: 'btn primary', text: 'Восстановить',
+        onclick: async () => {
+          const res = await Native.api('backup.import', { text: text.value, password: password.value });
+          Render.closeSheet();
+          if (res && res.ok) {
+            S.settings = Settings.read();
+            Render.toast('Профиль восстановлен');
+            Bus.emit('render');
+          } else {
+            Render.toast((res && res.error) || 'Не удалось восстановить');
+          }
+        },
+      }),
+    ]);
+    Render.openSheet({ title: 'Восстановление', content });
+  };
+
+  const collectChats = () => {
+    return S.chats.map((chat) => ({
+      id: chat.id,
+      title: chat.title,
+      createdAt: chat.createdAt,
+      updatedAt: chat.updatedAt,
+      mode: chat.mode,
+      model: chat.model,
+      provider: chat.provider,
+      messages: (S.messages.get(chat.id) || []).map((m) => ({
+        role: m.role, ts: m.ts, text: m.text, kind: m.kind,
+      })),
+    }));
   };
 
   const exportData = async (kind) => {

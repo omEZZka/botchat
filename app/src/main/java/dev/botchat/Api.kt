@@ -87,6 +87,37 @@ object Api {
                 payload.optString("id")
             )
             "export.data" -> Export.data(context, payload.optString("kind"))
+            "backup.export" -> {
+                val chats = payload.optJSONArray("chats") ?: org.json.JSONArray()
+                val archive = Backup.exportAll(context, chats)
+                val text = if (payload.optString("password").isNotBlank()) {
+                    val enc = Backup.encrypt(context, archive.toString(), payload.optString("password"))
+                    if (!enc.optBoolean("ok")) enc else enc
+                } else {
+                    archive
+                }
+                Backup.writeFile(
+                    context,
+                    if (payload.optString("password").isNotBlank()) "botchat-backup.enc.json" else "botchat-backup.json",
+                    text.toString()
+                )
+            }
+            "backup.import" -> {
+                val raw = payload.optString("text")
+                val password = payload.optString("password")
+                val parsed = runCatching { JSONObject(raw) }.getOrNull()
+                    ?: JSONObject().put("ok", false).put("error", "Архив повреждён")
+                if (parsed.optString("format") == "botchat.encrypted") {
+                    val plain = Backup.decrypt(context, parsed, password)
+                    if (plain == null) {
+                        JSONObject().put("ok", false).put("error", "Неверный пароль или архив повреждён")
+                    } else {
+                        Backup.importSettings(context, plain)
+                    }
+                } else {
+                    Backup.importSettings(context, raw)
+                }
+            }
             else -> JSONObject().put("ok", false).put("error", "unknown op: $op")
         }
     }

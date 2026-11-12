@@ -29,7 +29,8 @@ const Agent = (() => {
   const send = async (chatId, payload) => {
     const chat = Store.getChat(chatId);
     if (!chat) return;
-    if (!S.online) {
+    const offline = !S.online || !navigator.onLine;
+    if (offline) {
       await Store.addMessage(chatId, {
         role: 'user', kind: 'text', text: payload.text || '',
         attachments: payload.attachments || [], status: 'queued',
@@ -38,6 +39,7 @@ const Agent = (() => {
       Store.enqueue(chatId, payload);
       await Store.touchChat(chatId, { status: 'queued' });
       Render.toast('Нет сети: сообщение в очереди');
+      Store.publishState();
       return;
     }
     const userMsg = await Store.addMessage(chatId, {
@@ -56,15 +58,20 @@ const Agent = (() => {
   };
 
   const flushQueue = async () => {
+    if (!S.online || !S.queue.length) return;
     const items = S.queue.slice();
     for (const item of items) {
       if (!S.online) break;
       Store.dequeue(item.id);
       const list = Store.messages(item.chatId);
       const last = list.filter((m) => m.role === 'user' && m.status === 'queued').pop();
-      if (last) await Store.updateMessage(item.chatId, last.id, { status: 'delivered' }, { silent: true });
+      if (last) {
+        await Store.updateMessage(item.chatId, last.id, { status: 'delivered' }, { silent: true });
+        await Store.touchChat(item.chatId, { status: 'running' });
+      }
       if (!S.agent.running) await run(item.chatId);
     }
+    Bus.emit('render');
   };
 
   const run = async (chatId) => {

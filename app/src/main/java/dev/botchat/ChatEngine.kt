@@ -74,44 +74,75 @@ object ChatEngine {
         val messages = payload.optJSONArray("messages") ?: JSONArray()
         val toolsEnabled = payload.optBoolean("tools", true)
         val planOnly = payload.optBoolean("planOnly", false)
-        val keys = Secrets.keyRing(context, provider.id)
-        val attemptKeys: List<String?> = if (keys.isEmpty()) listOf(null) else keys
         var lastError = "Не удалось получить ответ"
         var succeeded = false
+        var current: Triple<Providers.Provider, String, String?>? = Triple(provider, modelId, null)
 
-        for ((keyIndex, key) in attemptKeys.withIndex()) {
-            if (run.cancelled.get()) return
-            if (provider.needsKey && key == null) {
-                lastError = "Введите API-ключ в настройках провайдера"
-                break
-            }
-            val outcome = attempt(
-                context, host, run, provider, key, requestId, system, messages,
-                toolsEnabled, planOnly, modelId
-            )
-            if (outcome.ok) {
-                succeeded = true
-                break
-            }
-            lastError = outcome.error
-            if (!outcome.retryable) break
-            if (outcome.status == 429 && key != null) {
-                Secrets.rotate(context, provider.id, key)
-            }
-            if (keyIndex == attemptKeys.lastIndex) {
-                val next = nextModel(payload, modelId)
-                if (next != null && next.first == provider.id) {
-                    val retry = attempt(
-                        context, host, run, provider, attemptKeys.first(), requestId, system,
-                        messages, toolsEnabled, planOnly, next.second
-                    )
-                    if (retry.ok) {
-                        succeeded = true
-                        break
-                    }
-                    lastError = retry.error
+        // Цепочка fallback: основная модель → резервные; на каждую — все ключи провайдера.
+        val candidates = ArrayList<Pair<Providers.Provider, String>>()
+        candidates.add(provider to modelId)
+        val chain = payload.optJSONArray("fallbackModels")
+        if (chain != null) {
+            for (i in 0 until chain.length()) {
+                val item = chain.optJSONObject(i) ?: continue
+                val pid = item.optString("provider", provider.id)
+                val mid = item.optString("id")
+                if (mid.isBlank()) continue
+                val p = Providers.byId(context, pid) ?: continue
+                if (candidates.none { it.first.id == p.id && it.second == mid }) {
+                    candidates.add(p to mid)
                 }
             }
+        }
+
+        for ((candidateProvider, candidateModel) in candidates) {
+            if (run.cancelled.get()) return
+            val keys = Secrets.keyRing(context, candidateProvider.id)
+            val attemptKeys: List<String?> = if (keys.isEmpty()) listOf(null) else keys
+            var modelDone = false
+            for (key in attemptKeys) {
+                if (run.cancelled.get()) return
+                if (candidateProvider.needsKey && key == null) {
+                    lastError = if (candidateProvider.id == provider.id) {
+                        "Введите API-ключ в настройках провайдера"
+                    } else {
+                        "Нет ключа для " + candidateProvider.name
+                    }
+                    break
+                }
+                current = Triple(candidateProvider, candidateModel, key)
+                val outcome = attempt(
+                    context, host, run, candidateProvider, key, requestId, system, messages,
+                    toolsEnabled, planOnly, candidateModel
+                )
+                if (outcome.ok) {
+                    succeeded = true
+                    modelDone = true
+                    break
+                }
+                lastError = outcome.error
+                if (outcome.status == 429 && key != null) {
+                    Secrets.rotate(context, candidateProvider.id, key)
+                    continue
+                }
+                if (!outcome.retryable) {
+                    modelDone = true
+                    break
+                }
+                // Идемпотентные повторы уже сделаны внутри Net; здесь — смена ключа или модели.
+                continue
+            }
+            if (succeeded) break
+            if (modelDone) continue
+        }
+        runCatching {
+            host.emit(
+                "llm.model",
+                JSONObject()
+                    .put("requestId", requestId)
+                    .put("provider", current?.first?.id ?: provider.id)
+                    .put("model", current?.second ?: modelId)
+            )
         }
 
         if (!succeeded && !run.cancelled.get()) {
@@ -123,18 +154,6 @@ object ChatEngine {
             }
         }
         runs.remove(chatId)
-    }
-
-    private fun nextModel(payload: JSONObject, current: String): Pair<String, String>? {
-        val alt = payload.optJSONArray("fallbackModels") ?: return null
-        for (i in 0 until alt.length()) {
-            val item = alt.optJSONObject(i) ?: continue
-            val id = item.optString("id")
-            if (id.isNotBlank() && id != current) {
-                return item.optString("provider") to id
-            }
-        }
-        return null
     }
 
     private class Outcome(val ok: Boolean, val retryable: Boolean, val status: Int, val error: String)
