@@ -76,13 +76,13 @@ const Boot = (() => {
 
     stage('Провайдеры', 26);
     try {
-      await withTimeout(ProvidersUI.load(), 8000, null);
+      await withTimeout(ProvidersUI.load(), 6000, null);
     } catch (err) {
       logError('providers', err);
     }
     stage('История чатов', 48);
     try {
-      await withTimeout(Store.load(), 15000, null);
+      await withTimeout(Store.load(), 12000, null);
     } catch (err) {
       logError('history', err);
     }
