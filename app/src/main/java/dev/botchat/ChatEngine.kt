@@ -135,14 +135,16 @@ object ChatEngine {
             if (succeeded) break
             if (modelDone) continue
         }
-        runCatching {
-            host.emit(
-                "llm.model",
-                JSONObject()
-                    .put("requestId", requestId)
-                    .put("provider", current?.first?.id ?: provider.id)
-                    .put("model", current?.second ?: modelId)
-            )
+        if (succeeded) {
+            runCatching {
+                host.emit(
+                    "llm.model",
+                    JSONObject()
+                        .put("requestId", requestId)
+                        .put("provider", current?.first?.id ?: provider.id)
+                        .put("model", current?.second ?: modelId)
+                )
+            }
         }
 
         if (!succeeded && !run.cancelled.get()) {

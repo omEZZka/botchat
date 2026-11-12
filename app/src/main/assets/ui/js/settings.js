@@ -21,6 +21,7 @@ const Settings2 = (() => {
     section.appendChild(profile);
 
     const rows = [
+      { icon: 'shield', label: 'Профили', sub: (S.env && S.env.profile) || 'изоляция рабочих папок', action: () => Pickers.profilesSheet() },
       { icon: 'key', label: 'Провайдеры', sub: connectedCount(), action: () => ProvidersUI.openProvidersScreen() },
       { icon: 'model', label: 'Модели', sub: modelLine(), action: () => ProvidersUI.openModelSheet() },
       { icon: 'sparkle', label: 'Агент', sub: 'Лимит ' + S.settings.stepLimit + ' шагов · режим ' + modeLabel(), action: () => Pickers.appSettings() },

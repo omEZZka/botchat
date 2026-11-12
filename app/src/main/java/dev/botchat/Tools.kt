@@ -146,7 +146,7 @@ object Tools {
 
     fun chatRoot(context: Context, chatId: String): File {
         val safe = chatId.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "default" }
-        return File(context.filesDir, "workspace/$safe").apply { mkdirs() }
+        return File(Profiles.root(context), safe).apply { mkdirs() }
     }
 
     private fun resolve(root: File, path: String): File? {

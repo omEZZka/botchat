@@ -183,6 +183,60 @@ const Pickers = (() => {
     Render.openSheet({ title: 'Экспорт и бэкап', content });
   };
 
+  const profilesSheet = async () => {
+    const res = await Native.api('profiles.list');
+    const content = U.el('div', { class: 'profiles-sheet' });
+    const list = U.el('div', { class: 'profile-list' });
+    const renderList = (activeId, profiles) => {
+      U.clear(list);
+      (profiles || []).forEach((profile) => {
+        const active = profile.id === activeId;
+        list.appendChild(U.el('div', { class: 'profile-row' + (active ? ' active' : '') }, [
+          Render.avatar(profile.name || profile.id, 3, 2),
+          U.el('span', { class: 'profile-row-name', text: profile.name || profile.id }),
+          active
+            ? U.el('span', { class: 'profile-row-badge', text: 'активен' })
+            : U.el('button', {
+              class: 'link-btn', text: 'выбрать',
+              onclick: async () => {
+                const r = await Native.api('profiles.active', { id: profile.id });
+                if (r && r.ok) {
+                  Render.toast('Профиль: ' + (profile.name || profile.id));
+                  Render.closeSheet();
+                  window.location.reload();
+                }
+              },
+            }),
+        ]));
+      });
+    };
+    renderList(res?.active, res?.profiles);
+    content.appendChild(U.el('p', { class: 'muted small', text: 'Профиль изолирует рабочую папку чатов: файлы, чекпоинты и проекты не пересекаются.' }));
+    content.appendChild(list);
+    const nameInput = U.el('input', { class: 'field', placeholder: 'Название профиля' });
+    content.appendChild(U.el('div', { class: 'profile-add' }, [
+      nameInput,
+      U.el('button', {
+        class: 'btn small', text: 'Создать',
+        onclick: async () => {
+          const name = nameInput.value.trim();
+          if (!name) return;
+          const id = 'p' + Date.now().toString(36);
+          const r = await Native.api('profiles.add', { id, name });
+          if (r && r.ok) {
+            const refreshed = await Native.api('profiles.list');
+            renderList(refreshed?.active, refreshed?.profiles);
+            nameInput.value = '';
+            Render.toast('Профиль создан');
+          } else {
+            Render.toast((r && r.error) || 'Не удалось создать профиль');
+          }
+        },
+      }),
+    ]));
+    Render.openSheet({ title: 'Профили', content });
+  };
+
   const exportChat = async (format) => {
     const chat = Store.getChat(S.chatId);
     if (!chat) return;
@@ -336,7 +390,7 @@ const Pickers = (() => {
 
   return {
     chatSettings, appSettings, appMenu, exportSheet, exportChat, exportData,
-    aboutSheet, taskGraph, openCheckpoints, toggleRow, numberRow,
+    aboutSheet, taskGraph, openCheckpoints, toggleRow, numberRow, profilesSheet,
   };
 })();
 

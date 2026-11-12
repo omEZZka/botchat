@@ -50,6 +50,16 @@ object Api {
             "agent.state" -> Agent.restore(context, payload.optString("chatId"))
             "agent.report" -> Steps.report(context, payload.optString("chatId"))
             "tasks.list" -> SubAgents.all(context)
+            "profiles.list" -> JSONObject()
+                .put("ok", true)
+                .put("active", Profiles.active(context))
+                .put("profiles", Profiles.list(context))
+            "profiles.add" -> Profiles.add(
+                context,
+                payload.optString("id"),
+                payload.optString("name")
+            )
+            "profiles.active" -> Profiles.setActive(context, payload.optString("id"))
             "agent.pause" -> Agent.pause(payload.optString("chatId"))
             "agent.resume" -> Agent.resume(context, payload.optString("chatId"))
             "chat.cancel" -> ChatEngine.cancel(payload.optString("chatId"))

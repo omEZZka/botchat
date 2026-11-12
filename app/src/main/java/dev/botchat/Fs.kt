@@ -17,7 +17,7 @@ object Fs {
 
     private const val MAX_TEXT = 512 * 1024
 
-    fun workspaceRoot(): File = File(App.instance.filesDir, "workspace").apply { mkdirs() }
+    fun workspaceRoot(): File = Profiles.root(App.instance).apply { mkdirs() }
 
     fun root(chatId: String = ""): File {
         val safe = chatId.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "default" }
