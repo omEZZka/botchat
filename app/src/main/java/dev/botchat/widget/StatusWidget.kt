@@ -26,6 +26,14 @@ class StatusWidget : AppWidgetProvider() {
         if (intent.action == ACTION_STOP) {
             val state = runCatching { JSONObject(AppState.raw()) }.getOrDefault(JSONObject())
             Agent.stop(state.optString("activeChatId", ""), "stopped from widget")
+            val manager = AppWidgetManager.getInstance(context)
+            val ids = manager.getAppWidgetIds(android.content.ComponentName(context, StatusWidget::class.java))
+            ids.forEach { render(context, manager, it) }
+        }
+        if (intent.action == ACTION_REFRESH) {
+            val manager = AppWidgetManager.getInstance(context)
+            val ids = manager.getAppWidgetIds(android.content.ComponentName(context, StatusWidget::class.java))
+            ids.forEach { render(context, manager, it) }
         }
     }
 
@@ -68,5 +76,11 @@ class StatusWidget : AppWidgetProvider() {
 
     companion object {
         const val ACTION_STOP = "dev.botchat.widget.STOP"
+        const val ACTION_REFRESH = "dev.botchat.widget.REFRESH"
+
+        fun refresh(context: Context) {
+            val intent = Intent(context, StatusWidget::class.java).apply { action = ACTION_REFRESH }
+            context.sendBroadcast(intent)
+        }
     }
 }

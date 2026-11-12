@@ -56,6 +56,8 @@ const Settings = (() => {
     windowSize: 60,
     fallbackChain: [],
     compact: false,
+    overlay: false,
+    rootfsUrl: '',
     onboardedAt: 0,
   };
 

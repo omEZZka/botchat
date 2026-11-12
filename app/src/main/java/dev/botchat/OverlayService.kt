@@ -28,7 +28,7 @@ class OverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_HIDE -> removeIndicator()
-            ACTION_SET_COLOR -> setColor(intent.getIntExtra("color", 0xFF5B8CFF.toInt()))
+            ACTION_SET_COLOR -> applyColor(intent.getIntExtra("color", 0xFF5B8CFF.toInt()))
         }
         return START_STICKY
     }
@@ -51,6 +51,7 @@ class OverlayService : Service() {
 
     private fun addIndicator() {
         if (view != null) return
+        isVisible = true
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val dot = View(this).apply {
             setBackgroundColor(0xFF5B8CFF.toInt())
@@ -83,14 +84,29 @@ class OverlayService : Service() {
         runCatching { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(v) }
         view = null
         params = null
+        isVisible = false
     }
 
-    private fun setColor(color: Int) {
+    private fun applyColor(color: Int) {
         val container = view as? FrameLayout ?: return
-        (container.getChildAt(0))?.setBackgroundColor(color)
+        val dot = container.getChildAt(0) ?: return
+        dot.alpha = if (color == 0) 0f else 1f
+        if (color != 0) dot.setBackgroundColor(color)
     }
 
     companion object {
+        @Volatile
+        var isVisible: Boolean = false
+            private set
+
+        fun setColor(color: Int) {
+            val intent = Intent(App.instance, OverlayService::class.java).apply {
+                action = ACTION_SET_COLOR
+                putExtra("color", color)
+            }
+            runCatching { App.instance.startService(intent) }
+        }
+
         private const val NOTIFY_ID = 1002
         const val ACTION_HIDE = "dev.botchat.overlay.HIDE"
         const val ACTION_SET_COLOR = "dev.botchat.overlay.COLOR"

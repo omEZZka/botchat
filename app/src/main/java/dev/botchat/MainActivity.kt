@@ -203,7 +203,16 @@ class MainActivity : Activity(), BridgeHost {
                 when (method) {
                     "state" -> {
                         AppState.publish(payload.toString())
-                        runOnUiThread { TileService.requestRefresh(this@MainActivity) }
+                        runOnUiThread {
+                            TileService.requestRefresh(this@MainActivity)
+                            dev.botchat.widget.StatusWidget.refresh(this@MainActivity)
+                            val color = when {
+                                payload.optBoolean("pendingPermission") -> 0xFFFFB020.toInt()
+                                payload.optBoolean("agentRunning") -> 0xFF3FBF6F.toInt()
+                                else -> 0x00000000
+                            }
+                            if (OverlayService.isVisible) OverlayService.setColor(color)
+                        }
                         ok()
                     }
                     "fs" -> Fs.info(payload.optString("path"), payload.optString("chatId"))
@@ -228,6 +237,19 @@ class MainActivity : Activity(), BridgeHost {
                     "pick" -> pick(payload.optString("kind"))
                     "env" -> env()
                     "export.text" -> exportText(payload.optString("name"), payload.optString("text"))
+                    "settings.overlay" -> {
+                        runOnUiThread {
+                            runCatching {
+                                startActivity(
+                                    Intent(
+                                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                        Uri.parse("package:$packageName")
+                                    )
+                                )
+                            }
+                        }
+                        ok()
+                    }
                     "api" -> Api.dispatch(this@MainActivity, payload)
                     "tool" -> Tools.run(
                         this@MainActivity,

@@ -60,6 +60,21 @@ object Api {
                 payload.optString("name")
             )
             "profiles.active" -> Profiles.setActive(context, payload.optString("id"))
+            "overlay.show" -> {
+                if (android.provider.Settings.canDrawOverlays(context)) {
+                    OverlayService.start(context)
+                    JSONObject().put("ok", true)
+                } else {
+                    JSONObject()
+                        .put("ok", false)
+                        .put("error", "Нужно разрешение на наложение поверх других приложений")
+                        .put("settings", android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                }
+            }
+            "overlay.hide" -> {
+                OverlayService.hide(context)
+                JSONObject().put("ok", true)
+            }
             "agent.pause" -> Agent.pause(payload.optString("chatId"))
             "agent.resume" -> Agent.resume(context, payload.optString("chatId"))
             "chat.cancel" -> ChatEngine.cancel(payload.optString("chatId"))
