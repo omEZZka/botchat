@@ -125,9 +125,15 @@ const Db = (() => {
     objectStoreNames: { contains: () => true },
     createObjectStore: () => {},
     close: () => {},
-    transaction: () => ({
-      objectStore: (name) => memoryStore(name),
-    }),
+    transaction: () => {
+      const tx = {
+        objectStore: (name) => memoryStore(name),
+        oncomplete: null,
+        onerror: null,
+      };
+      setTimeout(() => tx.oncomplete && tx.oncomplete(), 0);
+      return tx;
+    },
   });
 
   const memoryStore = (name) => {
@@ -155,11 +161,11 @@ const Db = (() => {
     };
   };
 
-  const immediate = (value) => {
-    const req = { result: value, onsuccess: null, onerror: null };
-    setTimeout(() => req.onsuccess && req.onsuccess(), 0);
-    return req;
-  };
+  /**
+   * Запрос резервного хранилища. Помечается флагом __memory, чтобы вызывающий
+   * код не пытался читать .result у настоящего IDBRequest до завершения.
+   */
+  const immediate = (value) => ({ __memory: true, result: value });
 
   const pending = new Map();
 
@@ -238,20 +244,17 @@ const Db = (() => {
     return db.transaction(storeName, mode).objectStore(storeName);
   };
 
-  const request = (req) => new Promise((resolve, reject) => {
-    if (req && 'result' in req && req.onsuccess === null) {
-      resolve(req.result);
-      return;
-    }
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+  const request = (req) => {
+    if (req && req.__memory) return Promise.resolve(req.result);
+    return new Promise((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  };
 
   const put = async (storeName, value) => {
     const store = await tx(storeName, 'readwrite');
-    const req = store.put(value);
-    if (req && 'result' in req && req.onsuccess === null) return req.result;
-    return request(req);
+    return request(store.put(value));
   };
 
   const get = async (storeName, key) => {
@@ -276,7 +279,7 @@ const Db = (() => {
         const store = db.transaction('messages', 'readonly').objectStore('messages');
         const idx = store.index('chatId');
         const req = idx.getAll(chatId);
-        if (req && 'result' in req && req.onsuccess === null) {
+        if (req && req.__memory) {
           resolve(req.result || []);
           return;
         }

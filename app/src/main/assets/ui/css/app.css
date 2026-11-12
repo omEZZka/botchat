@@ -1300,3 +1300,11 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
 }
 .model-pin.on { color: var(--acc); }
 .model-row.active { background: var(--acc-soft); color: var(--fg); }
+
+.onboarding-skip {
+  display: block;
+  margin: 10px auto 0;
+  color: var(--mut);
+  font-size: 13px;
+  padding: 6px 10px;
+}

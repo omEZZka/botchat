@@ -319,6 +319,21 @@ class MainActivity : Activity(), BridgeHost {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (!ready && splash == null) {
+            splash = buildSplash()
+            root.addView(
+                splash,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+            startWatchdog()
+        }
+    }
+
     private fun markReady() {
         if (ready) return
         ready = true

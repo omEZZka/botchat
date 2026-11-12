@@ -103,6 +103,16 @@ const Boot = (() => {
     stage('Интерфейс', 88);
     Render.bind();
     Render.render();
+    const view = document.getElementById('view');
+    if (view && !view.firstChild) {
+      S.screen = 'list';
+      S.route = 'chats';
+      try {
+        Render.render();
+      } catch (err) {
+        logError('render', err);
+      }
+    }
     stage('Готово', 100);
     Native.call('ready', {});
 
@@ -200,6 +210,9 @@ const Onboarding = (() => {
           onclick: () => (index === steps.length - 1 ? finish() : next()),
         }),
       ]));
+      body.appendChild(U.el('button', {
+        class: 'link-btn onboarding-skip', text: 'Пропустить', onclick: () => finish(),
+      }));
     };
 
     const next = () => {
@@ -276,7 +289,12 @@ const Onboarding = (() => {
       ],
     });
 
-    void next;
+    renderStep();
+    if (!body.firstChild) {
+      sheet.remove();
+      backdrop.remove();
+      return;
+    }
   };
 
   return { open };
