@@ -222,6 +222,11 @@ class MainActivity : Activity(), BridgeHost {
                         payload.optInt("maxBytes", 512 * 1024),
                         payload.optString("chatId")
                     )
+                    "readBase64" -> Fs.readBase64(
+                        payload.optString("path"),
+                        payload.optInt("maxBytes", 4 * 1024 * 1024),
+                        payload.optString("chatId")
+                    )
                     "writeText" -> Fs.writeText(
                         payload.optString("path"),
                         payload.optString("text"),

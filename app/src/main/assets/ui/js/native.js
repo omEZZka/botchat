@@ -26,6 +26,7 @@ const Native = (() => {
     info: (path) => call('fs', { path, chatId: chatId() }),
     ls: (path) => call('ls', { path, chatId: chatId() }),
     readText: (path, maxBytes) => call('readText', { path, maxBytes: maxBytes || 524288, chatId: chatId() }),
+    readBase64: (path, maxBytes) => call('readBase64', { path, maxBytes: maxBytes || 4194304, chatId: chatId() }),
     writeText: (path, text) => call('writeText', { path, text, chatId: chatId() }),
     mkdir: (path) => call('mkdir', { path, chatId: chatId() }),
     remove: (path) => call('delete', { path, chatId: chatId() }),

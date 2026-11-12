@@ -87,6 +87,18 @@ object Fs {
             .put("mtime", f.lastModified())
     }
 
+    fun readBase64(path: String, maxBytes: Int, chatId: String = ""): JSONObject {
+        val f = canonicalPath(path, root(chatId)) ?: return err("path outside sandbox")
+        if (!f.isFile) return err("not a file")
+        val limit = maxBytes.coerceIn(1, 8 * 1024 * 1024)
+        if (f.length() > limit) return err("file too large")
+        val bytes = f.readBytes()
+        return JSONObject()
+            .put("ok", true)
+            .put("base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+            .put("size", bytes.size)
+    }
+
     fun writeText(path: String, text: String, chatId: String = ""): JSONObject {
         val f = canonicalPath(path, root(chatId)) ?: return err("path outside sandbox")
         f.parentFile?.mkdirs()

@@ -178,9 +178,9 @@ const Composer = (() => {
         const items = (res.items || []).map((item) => Object.assign({}, item));
         for (const item of items) {
           if ((item.mime || '').startsWith('image/') && item.path) {
-            const read = await Native.fs.readText(item.path, 2048);
-            if (read && read.ok && /^[\x00-\xFF]*$/.test(read.text || '')) {
-              item.dataUrl = 'data:' + (item.mime || 'image/png') + ';base64,' + read.text.replace(/\s/g, '');
+            const read = await Native.fs.readBase64(item.path, 4 * 1024 * 1024);
+            if (read && read.ok && read.base64) {
+              item.dataUrl = 'data:' + (item.mime || 'image/png') + ';base64,' + read.base64;
             }
           }
           attachments.push(item);

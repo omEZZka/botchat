@@ -1224,3 +1224,34 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
 }
 .context-warning .icon { flex: 0 0 auto; }
 .context-warning span { flex: 1; min-width: 0; }
+
+/* ---------- нижние табы ---------- */
+
+.tabbar {
+  flex: 0 0 auto;
+  display: flex;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  padding-bottom: var(--safe-bottom);
+}
+.tabbar[hidden] { display: none; }
+
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 54px;
+  color: var(--mut);
+  font-size: 11px;
+  transition: color var(--motion) ease;
+  position: relative;
+}
+.tab .icon { transition: transform var(--motion) ease; }
+.tab.active { color: var(--acc); }
+.tab.active .icon { transform: scale(1.06); }
+.tab:active .icon { transform: scale(0.94); }
+
+.view { padding-bottom: 0; }
