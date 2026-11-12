@@ -123,7 +123,30 @@ const Db = (() => {
   const open = () => {
     if (dbPromise) return dbPromise;
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(NAME, VERSION);
+      let settled = false;
+      const finish = (db) => {
+        if (settled) return;
+        settled = true;
+        resolve(db);
+      };
+      let req;
+      try {
+        req = indexedDB.open(NAME, VERSION);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          console.warn('IndexedDB is slow, continuing with in-memory cache');
+          resolve(memoryDb());
+        }
+      }, 2500);
+      req.onblocked = () => {
+        clearTimeout(timer);
+        finish(memoryDb());
+      };
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('chats')) {
@@ -143,13 +166,63 @@ const Db = (() => {
         }
       };
       req.onsuccess = () => {
+        clearTimeout(timer);
         const db = req.result;
         db.onversionchange = () => db.close();
-        resolve(db);
+        finish(db);
       };
-      req.onerror = () => reject(req.error);
+      req.onerror = () => {
+        clearTimeout(timer);
+        finish(memoryDb());
+      };
     });
     return dbPromise;
+  };
+
+  /**
+   * Резервное хранилище в памяти: приложение остаётся рабочим,
+   * даже если IndexedDB недоступен или заблокирован.
+   */
+  const memory = new Map();
+  const memoryDb = () => ({
+    _memory: true,
+    objectStoreNames: { contains: () => true },
+    createObjectStore: () => {},
+    close: () => {},
+    transaction: () => ({
+      objectStore: (name) => memoryStore(name),
+    }),
+  });
+
+  const memoryStore = (name) => {
+    const key = (v) => String(v && (v.id !== undefined ? v.id : v.key));
+    return {
+      put: (value) => {
+        memory.set(name + ':' + key(value), value);
+        return immediate({});
+      },
+      get: (k) => immediate(memory.get(name + ':' + String(k))),
+      getAll: () => immediate(Array.from(memory.entries())
+        .filter(([k]) => k.startsWith(name + ':'))
+        .map(([, v]) => v)),
+      delete: (k) => {
+        memory.delete(name + ':' + String(k));
+        return immediate({});
+      },
+      index: () => ({
+        getAll: (chatId) => immediate(Array.from(memory.entries())
+          .filter(([k]) => k.startsWith(name + ':'))
+          .map(([, v]) => v)
+          .filter((v) => v && v.chatId === chatId)),
+      }),
+      createIndex: () => {},
+    };
+  };
+
+  const immediate = (value) => {
+    const req = { result: value, onsuccess: null, onerror: null };
+    setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+    return req;
   };
 
   const tx = async (storeName, mode) => {
@@ -158,13 +231,19 @@ const Db = (() => {
   };
 
   const request = (req) => new Promise((resolve, reject) => {
+    if (req && 'result' in req && req.onsuccess === null) {
+      resolve(req.result);
+      return;
+    }
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 
   const put = async (storeName, value) => {
     const store = await tx(storeName, 'readwrite');
-    return request(store.put(value));
+    const req = store.put(value);
+    if (req && 'result' in req && req.onsuccess === null) return req.result;
+    return request(req);
   };
 
   const get = async (storeName, key) => {
@@ -184,12 +263,20 @@ const Db = (() => {
 
   const byChat = async (chatId) => {
     const db = await open();
-    return new Promise((resolve, reject) => {
-      const store = db.transaction('messages', 'readonly').objectStore('messages');
-      const idx = store.index('chatId');
-      const req = idx.getAll(chatId);
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error);
+    return new Promise((resolve) => {
+      try {
+        const store = db.transaction('messages', 'readonly').objectStore('messages');
+        const idx = store.index('chatId');
+        const req = idx.getAll(chatId);
+        if (req && 'result' in req && req.onsuccess === null) {
+          resolve(req.result || []);
+          return;
+        }
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch (_) {
+        resolve([]);
+      }
     });
   };
 
@@ -207,15 +294,21 @@ const Db = (() => {
 
   const prune = async (chatId, keep) => {
     const rows = await byChat(chatId);
-    if (rows.length <= keep) return;
+    if (rows.length <= keep) return 0;
     const sorted = rows.sort((a, b) => a.ts - b.ts);
     const drop = sorted.slice(0, rows.length - keep);
     const db = await open();
     const batch = db.transaction('messages', 'readwrite').objectStore('messages');
     for (const row of drop) batch.delete(row.id);
+    if (db._memory) return drop.length;
     return new Promise((resolve) => {
-      batch.transaction.oncomplete = () => resolve(drop.length);
-      batch.transaction.onerror = () => resolve(0);
+      const tx = batch.transaction;
+      if (!tx) {
+        resolve(drop.length);
+        return;
+      }
+      tx.oncomplete = () => resolve(drop.length);
+      tx.onerror = () => resolve(0);
     });
   };
 
@@ -224,9 +317,15 @@ const Db = (() => {
     const db = await open();
     const batch = db.transaction('messages', 'readwrite').objectStore('messages');
     for (const row of rows) batch.delete(row.id);
+    if (db._memory) return rows.length;
     return new Promise((resolve) => {
-      batch.transaction.oncomplete = () => resolve(rows.length);
-      batch.transaction.onerror = () => resolve(0);
+      const tx = batch.transaction;
+      if (!tx) {
+        resolve(rows.length);
+        return;
+      }
+      tx.oncomplete = () => resolve(rows.length);
+      tx.onerror = () => resolve(0);
     });
   };
 
@@ -245,7 +344,7 @@ const Store = (() => {
     const chats = await Db.all('chats').catch(() => []);
     S.chats = (chats || []).sort(compareChats);
     if (!S.chats.length) {
-      await createChat({ title: 'Новый чат', silent: true });
+      await createChat({ title: 'Новый чат', silent: true }).catch(() => null);
     }
     S.chatId = S.chats[0] ? S.chats[0].id : null;
     if (S.chatId) {

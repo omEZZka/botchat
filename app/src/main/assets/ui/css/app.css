@@ -1086,12 +1086,32 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
 }
 .boot.done { opacity: 0; pointer-events: none; }
 .boot-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
   background: var(--acc);
   animation: pulse 1.1s ease-in-out infinite;
+  margin-bottom: 14px;
 }
+.boot { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; }
+.boot-label { font-size: 20px; font-weight: 650; letter-spacing: 0.4px; color: var(--fg); }
+.boot-track {
+  width: 220px;
+  height: 4px;
+  margin-top: 16px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.boot-bar {
+  display: block;
+  height: 100%;
+  width: 4%;
+  border-radius: 3px;
+  background: var(--acc);
+  transition: width 180ms ease;
+}
+.boot-stage { margin-top: 12px; font-size: 12.5px; color: var(--mut); }
 @keyframes pulse {
   0%, 100% { transform: scale(1); opacity: 0.85; }
   50% { transform: scale(0.86); opacity: 0.55; }

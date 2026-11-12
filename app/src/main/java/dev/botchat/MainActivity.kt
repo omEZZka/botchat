@@ -14,6 +14,16 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.webkit.JavascriptInterface
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -23,6 +33,7 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import android.app.Activity
 import androidx.core.content.ContextCompat
+import androidx.webkit.WebViewAssetLoader
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -32,6 +43,18 @@ class MainActivity : Activity(), BridgeHost {
     private lateinit var web: WebView
     private var pendingPick: ((List<Uri>) -> Unit)? = null
     private var receiver: BroadcastReceiver? = null
+
+    private lateinit var root: FrameLayout
+    private var splash: View? = null
+    private var splashStage: TextView? = null
+    private var splashDetail: TextView? = null
+    private var splashProgress: ProgressBar? = null
+    private var splashRetry: Button? = null
+    private var ready = false
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var watchdog: Runnable? = null
+    private var assetLoader: WebViewAssetLoader? = null
+    private var renderCrashed = false
 
     private val REQ_FILES = 1001
     private val REQ_IMAGE = 1002
@@ -67,16 +90,58 @@ class MainActivity : Activity(), BridgeHost {
         if (Build.VERSION.SDK_INT >= 29) {
             web.settings.forceDark = WebSettings.FORCE_DARK_ON
         }
+        assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
         web.addJavascriptInterface(Bridge(), "BCBridge")
-        web.webChromeClient = WebChromeClient()
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                if (ready) return
+                runOnUiThread {
+                    splashProgress?.isIndeterminate = false
+                    splashProgress?.progress = (newProgress.coerceIn(0, 100) * 0.6).toInt() + 4
+                }
+            }
+        }
         web.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val url = request.url
                 if (url.host == "appassets.androidplatform.net") {
-                    val path = url.path?.removePrefix("/")?.ifBlank { "index.html" } ?: "index.html"
+                    val loader = assetLoader
+                    if (loader != null) {
+                        val response = loader.shouldInterceptRequest(url)
+                        if (response != null) return response
+                    }
+                    var path = url.path?.removePrefix("/")?.trimStart('/')?.ifBlank { "ui/index.html" }
+                        ?: "ui/index.html"
+                    if (!path.startsWith("ui/")) path = "ui/$path"
                     return assetResponse(path)
                 }
                 return null
+            }
+
+            override fun onRenderProcessGone(
+                view: WebView,
+                detail: android.webkit.RenderProcessGoneDetail
+            ): Boolean {
+                if (renderCrashed) return true
+                renderCrashed = true
+                showError("Процесс отображения остановлен системой. Повторите запуск.")
+                return true
+            }
+
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: android.webkit.WebResourceError
+            ) {
+                if (request.isForMainFrame) {
+                    showError("Не удалось загрузить интерфейс: " + (error.description ?: "ошибка"))
+                }
+            }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                setStage("Запуск интерфейса", 62)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -88,10 +153,179 @@ class MainActivity : Activity(), BridgeHost {
                 return true
             }
         }
-        setContentView(web)
-        web.loadUrl("https://appassets.androidplatform.net/index.html")
+        root = FrameLayout(this)
+        root.setBackgroundColor(0xFF0F1216.toInt())
+        root.addView(
+            web,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        splash = buildSplash()
+        splash?.let {
+            root.addView(
+                it,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+        setContentView(root)
         registerEvents()
+        startWatchdog()
+        loadApp()
         handleIntent(intent)
+    }
+
+    private fun loadApp() {
+        ready = false
+        setStage("Загрузка интерфейса", 4)
+        web.loadUrl("https://appassets.androidplatform.net/assets/ui/index.html")
+    }
+
+    /**
+     * Экран загрузки: рисуется нативно, поэтому виден даже если WebView ещё не готов.
+     */
+    private fun buildSplash(): View {
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(28), dp(28), dp(28), dp(28))
+            setBackgroundColor(0xFF0F1216.toInt())
+        }
+
+        val logo = View(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(18).toFloat()
+                setColor(0xFF5B8CFF.toInt())
+            }
+        }
+        wrap.addView(logo, LinearLayout.LayoutParams(dp(64), dp(64)))
+
+        val title = TextView(this).apply {
+            text = "botCHAT"
+            setTextColor(0xFFE7EBF0.toInt())
+            textSize = 24f
+            gravity = Gravity.CENTER
+        }
+        wrap.addView(title, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(18) })
+
+        splashStage = TextView(this).apply {
+            text = "Запуск"
+            setTextColor(0xFF8B95A3.toInt())
+            textSize = 13f
+            gravity = Gravity.CENTER
+        }
+        wrap.addView(splashStage, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(10) })
+
+        splashProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 5
+            progressTintList = android.content.res.ColorStateList.valueOf(0xFF5B8CFF.toInt())
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0xFF232A33.toInt())
+        }
+        wrap.addView(splashProgress, LinearLayout.LayoutParams(dp(220), dp(4)).apply { topMargin = dp(18) })
+
+        splashDetail = TextView(this).apply {
+            text = ""
+            setTextColor(0xFF6B7684.toInt())
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, 0)
+        }
+        wrap.addView(splashDetail, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+
+        splashRetry = Button(this).apply {
+            text = "Повторить"
+            visibility = View.GONE
+            setTextColor(0xFF0B0E13.toInt())
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(0xFF5B8CFF.toInt())
+            }
+            setOnClickListener {
+                hideError()
+                loadApp()
+                startWatchdog()
+            }
+        }
+        wrap.addView(splashRetry, LinearLayout.LayoutParams(dp(180), dp(42)).apply { topMargin = dp(16) })
+
+        return wrap
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun setStage(text: String, percent: Int) {
+        runOnUiThread {
+            splashStage?.text = text
+            splashProgress?.progress = percent.coerceIn(0, 100)
+        }
+    }
+
+    private fun showError(detail: String) {
+        runOnUiThread {
+            splashDetail?.text = detail
+            splashRetry?.visibility = View.VISIBLE
+            splashProgress?.isIndeterminate = false
+        }
+    }
+
+    private fun hideError() {
+        runOnUiThread {
+            splashDetail?.text = ""
+            splashRetry?.visibility = View.GONE
+        }
+    }
+
+    private fun markReady() {
+        if (ready) return
+        ready = true
+        stopWatchdog()
+        runOnUiThread {
+            splashProgress?.progress = 100
+            splashStage?.text = "Готово"
+            val view = splash ?: return@runOnUiThread
+            view.animate().alpha(0f).setDuration(180).withEndAction {
+                root.removeView(view)
+                splash = null
+            }.start()
+        }
+    }
+
+    private fun startWatchdog() {
+        stopWatchdog()
+        val task = Runnable {
+            if (ready) return@Runnable
+            if (splashDetail?.text.isNullOrBlank()) {
+                splashDetail?.text = "Загрузка занимает больше времени, чем обычно"
+            }
+            val slow = Runnable {
+                if (!ready) {
+                    showError("Интерфейс не ответил. Проверьте свободное место и повторите загрузку.")
+                }
+            }
+            handler.postDelayed(slow, 12_000)
+        }
+        watchdog = task
+        handler.postDelayed(task, 6_000)
+    }
+
+    private fun stopWatchdog() {
+        watchdog?.let { handler.removeCallbacks(it) }
+        watchdog = null
     }
 
     @Deprecated("Deprecated in Java")
@@ -201,6 +435,17 @@ class MainActivity : Activity(), BridgeHost {
             return try {
                 val payload = if (arg.isBlank()) JSONObject() else JSONObject(arg)
                 when (method) {
+                    "boot" -> {
+                        setStage(
+                            payload.optString("stage", "Загрузка"),
+                            payload.optInt("progress", 10)
+                        )
+                        ok()
+                    }
+                    "ready" -> {
+                        markReady()
+                        ok()
+                    }
                     "state" -> {
                         AppState.publish(payload.toString())
                         runOnUiThread {

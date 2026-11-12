@@ -4,10 +4,28 @@
  * Загрузка: онбординг, восстановление состояния, сеть, очередь, интенты.
  */
 const Boot = (() => {
+  const stage = (text, progress) => {
+    try {
+      Native.call('boot', { stage: text, progress });
+      const node = document.getElementById('boot-stage');
+      if (node) node.textContent = text + ' · ' + progress + '%';
+      const bar = document.getElementById('boot-bar');
+      if (bar) bar.style.width = progress + '%';
+    } catch (_) {
+      /* индикатор не критичен для работы */
+    }
+  };
+
+  const withTimeout = (promise, ms, fallback) => Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+
   const start = async () => {
     document.documentElement.dataset.theme = S.settings.theme || 'dark';
     Accent.apply();
-    S.env = await Native.env();
+    stage('Настройки', 8);
+    S.env = await withTimeout(Native.env(), 4000, { versionName: '—', rootfs: false });
     Prefs.apply();
 
     Bus.on('network:changed', (online) => {
@@ -43,16 +61,34 @@ const Boot = (() => {
       Bus.emit('native:picked', payload);
     });
 
-    await ProvidersUI.load();
-    await Store.load();
-    await restoreAgentState();
+    stage('Провайдеры', 26);
+    await withTimeout(ProvidersUI.load(), 8000, null);
+    stage('История чатов', 48);
+    await withTimeout(Store.load(), 15000, null);
+    stage('Восстановление состояния', 72);
+    await withTimeout(restoreAgentState(), 5000, null);
     Bus.emit('queue:flush');
 
+    if (!S.booted) {
+      S.booted = true;
+      if (!S.chats.length) {
+        S.screen = 'list';
+      }
+    }
+    stage('Интерфейс', 88);
     Render.bind();
     Render.render();
+    stage('Готово', 100);
+    Native.call('ready', {});
 
     if (!S.settings.onboarded) {
-      Onboarding.open();
+      try {
+        Onboarding.open();
+      } catch (err) {
+        console.error('onboarding failed', err);
+        S.settings.onboarded = true;
+        Settings.write(S.settings);
+      }
     }
 
     const chatId = new URLSearchParams(location.search).get('chat');

@@ -15,7 +15,12 @@
 </div>
 <div id="sheet-host" class="sheet-host"></div>
 <div id="toast-host" class="toast-host" aria-live="polite"></div>
-<div id="boot" class="boot"><div class="boot-mark"></div></div>
+<div id="boot" class="boot">
+  <div class="boot-mark"></div>
+  <div class="boot-label">botCHAT</div>
+  <div class="boot-track"><span id="boot-bar" class="boot-bar"></span></div>
+  <div id="boot-stage" class="boot-stage">Запуск · 0%</div>
+</div>
 
 <script src="vendor/marked.min.js"></script>
 <script src="vendor/purify.min.js"></script>
@@ -40,14 +45,54 @@
 <script>
   (function () {
     const boot = document.getElementById('boot');
-    Boot.start().catch(function (err) {
+    const stage = document.getElementById('boot-stage');
+    const bar = document.getElementById('boot-bar');
+    let finished = false;
+
+    function fail(err) {
+      if (finished) return;
+      const message = err && err.message ? err.message : String(err || 'неизвестная ошибка');
       console.error(err);
-      boot.classList.add('failed');
-      boot.textContent = 'Ошибка запуска: ' + (err && err.message ? err.message : err);
-    }).then(function () {
-      boot.classList.add('done');
-      setTimeout(function () { boot.remove(); }, 200);
+      if (stage) stage.textContent = 'Ошибка запуска: ' + message;
+      if (bar) bar.style.width = '100%';
+      if (boot.querySelector('.boot-retry')) return;
+      const retry = document.createElement('button');
+      retry.className = 'btn primary boot-retry';
+      retry.textContent = 'Повторить';
+      retry.style.marginTop = '16px';
+      retry.addEventListener('click', function () {
+        boot.querySelectorAll('.boot-retry').forEach(function (n) { n.remove(); });
+        if (stage) stage.textContent = 'Перезапуск интерфейса';
+        location.reload();
+      });
+      boot.appendChild(retry);
+      if (window.BCBridge) {
+        try {
+          window.BCBridge.call('boot', JSON.stringify({ stage: 'Ошибка', progress: 100 }));
+        } catch (_) {}
+      }
+    }
+
+    window.addEventListener('error', function (e) {
+      if (!finished && e && e.message) fail(e.message);
     });
+    window.addEventListener('unhandledrejection', function (e) {
+      if (!finished && e && e.reason) fail(e.reason);
+    });
+    setTimeout(function () {
+      if (!finished && !window.S) fail(new Error('скрипты не загрузились'));
+    }, 15000);
+    setTimeout(function () {
+      if (!finished && window.S && !window.S.booted) {
+        if (stage) stage.textContent = 'Загрузка занимает больше времени';
+      }
+    }, 8000);
+
+    Boot.start().then(function () {
+      finished = true;
+      boot.classList.add('done');
+      setTimeout(function () { boot.remove(); }, 220);
+    }).catch(fail);
   })();
 </script>
 </body>
