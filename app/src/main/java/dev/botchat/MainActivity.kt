@@ -126,7 +126,12 @@ class MainActivity : Activity(), BridgeHost {
             ): Boolean {
                 if (renderCrashed) return true
                 renderCrashed = true
-                showError("Процесс отображения остановлен системой. Повторите запуск.")
+                runOnUiThread {
+                    android.widget.Toast
+                        .makeText(this@MainActivity, "Перезапуск интерфейса", Toast.LENGTH_SHORT)
+                        .show()
+                    recreate()
+                }
                 return true
             }
 
@@ -142,6 +147,14 @@ class MainActivity : Activity(), BridgeHost {
 
             override fun onPageFinished(view: WebView, url: String?) {
                 setStage("Запуск интерфейса", 62)
+                handler.postDelayed({
+                    if (ready) return@postDelayed
+                    view.evaluateJavascript(
+                        "(window.S && window.S.booted) ? '1' : '0'"
+                    ) { value ->
+                        if (value == "\"1\"" || value == "1") markReady()
+                    }
+                }, 1500)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
