@@ -21,6 +21,8 @@ const Agent = (() => {
     todos: [],
     tasks: [],
     context: [],
+    checkpointed: false,
+    checkpointId: '',
     startedAt: Date.now(),
   });
 
@@ -321,9 +323,9 @@ const Agent = (() => {
       state: { status: 'pending', error: null },
       startedAt: Date.now(),
     };
-    const list = message.tools || [];
-    list.push(tool);
-    await Store.updateMessage(chatId, message.id, { tools: list }, { silent: true });
+    if (!message.tools) message.tools = [];
+    message.tools.push(tool);
+    await Store.updateMessage(chatId, message.id, { tools: message.tools.slice() }, { silent: true });
     Bus.emit('render');
     return tool;
   };
@@ -341,7 +343,7 @@ const Agent = (() => {
     Object.assign(tool, patch);
     const host = message || findToolHost(chatId, tool);
     if (!host) return;
-    await Store.updateMessage(chatId, host.id, { tools: host.tools }, { silent: true });
+    await Store.updateMessage(chatId, host.id, { tools: host.tools.slice() }, { silent: true });
     Bus.emit('render');
   };
 
@@ -367,6 +369,17 @@ const Agent = (() => {
       if (decision === 'always') {
         S.settings.trustChats = Array.from(new Set([...(S.settings.trustChats || []), chatId]));
         Settings.write(S.settings);
+      }
+    }
+    if (['write', 'edit'].includes(call.name) && active && !active.checkpointed) {
+      active.checkpointed = true;
+      const snap = await Native.api('checkpoints.create', {
+        chatId,
+        reason: 'перед ' + call.name + ': ' + ((call.args || {}).path || ''),
+      });
+      if (snap && snap.id) {
+        active.checkpointId = snap.id;
+        await Store.updateMessage(chatId, message.id, { checkpoint: snap.id }, { silent: true });
       }
     }
     try {
@@ -408,7 +421,7 @@ const Agent = (() => {
     for (let i = list.length - 1; i >= 0; i -= 1) {
       const msg = list[i];
       if (msg.tools && msg.tools.some((t) => t.id === tool.id)) {
-        await Store.updateMessage(chatIdSafe, msg.id, { tools: msg.tools }, { silent: true });
+        await Store.updateMessage(chatIdSafe, msg.id, { tools: msg.tools.slice() }, { silent: true });
         break;
       }
     }

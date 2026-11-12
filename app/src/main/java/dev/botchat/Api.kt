@@ -49,6 +49,7 @@ object Api {
             }
             "agent.state" -> Agent.restore(context, payload.optString("chatId"))
             "agent.report" -> Steps.report(context, payload.optString("chatId"))
+            "tasks.list" -> SubAgents.all(context)
             "agent.pause" -> Agent.pause(payload.optString("chatId"))
             "agent.resume" -> Agent.resume(context, payload.optString("chatId"))
             "chat.cancel" -> ChatEngine.cancel(payload.optString("chatId"))
@@ -75,6 +76,11 @@ object Api {
                 JSONObject().put("ok", true)
             }
             "checkpoints.list" -> Checkpoints.list(context, payload.optString("chatId"))
+            "checkpoints.create" -> {
+                val root = Tools.chatRoot(context, payload.optString("chatId"))
+                val snap = Checkpoints.snapshot(root, payload.optString("reason", "ручной снимок"))
+                JSONObject().put("ok", snap != null).put("id", snap?.optString("id") ?: "")
+            }
             "checkpoints.restore" -> Checkpoints.restore(
                 context,
                 payload.optString("chatId"),

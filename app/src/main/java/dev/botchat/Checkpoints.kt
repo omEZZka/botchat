@@ -18,7 +18,16 @@ object Checkpoints {
 
     private fun dir(root: File): File = File(root, DIR).apply { mkdirs() }
 
+    private var lastSnapshotAt = 0L
+    private const val DEDUP_MS = 20_000L
+
+    /** Снимок перед первым изменением файлов в серии: повторные вызовы в окне дедупа пропускаются. */
     fun snapshot(root: File, reason: String): JSONObject? {
+        val now = System.currentTimeMillis()
+        synchronized(this) {
+            if (now - lastSnapshotAt < DEDUP_MS) return null
+            lastSnapshotAt = now
+        }
         return runCatching {
             val base = dir(root)
             val id = "cp" + System.currentTimeMillis()

@@ -224,8 +224,9 @@ const Pickers = (() => {
     Render.openSheet({ title: 'О приложении', content });
   };
 
-  const taskGraph = () => {
-    const tasks = S.agent.tasks || [];
+  const taskGraph = async () => {
+    const res = await Native.api('tasks.list');
+    const tasks = (res && res.ok && res.tasks) || S.agent.tasks || [];
     const content = U.el('div', { class: 'task-graph' });
     const canvas = U.el('svg', { class: 'graph-canvas', viewBox: '0 0 320 200' });
     const nodes = tasks.length ? tasks : [{ role: 'main', status: 'running', description: 'Основной агент' }];
