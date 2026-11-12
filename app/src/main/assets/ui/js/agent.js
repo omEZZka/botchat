@@ -6,7 +6,6 @@
  * Сеть — только через Native.api (Kotlin), инструменты — через Native.tool.
  */
 const Agent = (() => {
-  const MAX_STEPS = 200;
   let active = null;
   let paused = false;
   let pauseWaiter = null;
@@ -575,7 +574,7 @@ const Agent = (() => {
 
   return {
     send, run, stop, togglePause, flushQueue, continueGeneration, regenerate,
-    executeTool, cancelActive, contextUsage, MAX_STEPS,
+    executeTool, cancelActive, contextUsage,
     get active() { return active; },
   };
 })();

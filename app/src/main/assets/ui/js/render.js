@@ -988,8 +988,6 @@ const Render = (() => {
       if (chatId === S.chatId) patchMessage(message);
     });
     Bus.on('toast', toast);
-    const messagesHost = () => chatListEl;
-    document.addEventListener('scroll', () => {}, true);
     const attachScroll = () => {
       if (!chatListEl || chatListEl.dataset.bound) return;
       chatListEl.dataset.bound = '1';
@@ -1008,7 +1006,6 @@ const Render = (() => {
       }, { passive: true });
     };
     Bus.on('render', attachScroll);
-    void messagesHost;
   };
 
   return {

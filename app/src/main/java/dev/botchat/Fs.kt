@@ -24,7 +24,6 @@ object Fs {
         return File(workspaceRoot(), safe).apply { mkdirs() }
     }
 
-    fun chatsDir(): File = File(workspaceRoot(), ".chats").apply { mkdirs() }
 
     fun attachmentsDir(): File = File(App.instance.filesDir, "attachments").apply { mkdirs() }
 

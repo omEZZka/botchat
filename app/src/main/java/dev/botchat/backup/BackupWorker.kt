@@ -23,8 +23,6 @@ class BackupWorker(context: Context, params: WorkerParameters) : Worker(context,
             Result.success()
         } catch (_: Exception) {
             Result.retry()
-        } finally {
-            System.gc()
         }
     }
 

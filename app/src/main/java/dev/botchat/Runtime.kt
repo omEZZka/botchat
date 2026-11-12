@@ -1,7 +1,6 @@
 package dev.botchat
 
 import android.content.Context
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -217,5 +216,4 @@ object Runtime {
         return JSONObject().put("ok", dir.deleteRecursively())
     }
 
-    fun listRootfsCandidates(): JSONArray = JSONArray()
 }
