@@ -19,6 +19,9 @@ object Runtime {
 
     fun prootBinary(context: Context): File = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
 
+    fun prootLoader(context: Context): File =
+        File(context.applicationInfo.nativeLibraryDir, "libproot-loader.so")
+
     fun rootfsReady(): Boolean = rootfsDir(App.instance).resolve("bin/sh").exists()
 
     fun bashAvailable(): Boolean = rootfsReady() && prootBinary(App.instance).exists()
@@ -69,6 +72,12 @@ object Runtime {
         pb.directory(cwd)
         pb.redirectErrorStream(true)
         pb.environment().clear()
+        prootLoader(context).takeIf { it.exists() }?.let { loader ->
+            pb.environment()["PROOT_LOADER"] = loader.absolutePath
+        }
+        val tmp = File(context.filesDir, "proot-tmp").apply { mkdirs() }
+        pb.environment()["PROOT_TMP_DIR"] = tmp.absolutePath
+        pb.environment()["PROOT_NO_SECCOMP"] = "1"
         val process = pb.start()
         val buffer = RingBuffer(maxBytes)
         val done = AtomicFlag()
@@ -148,6 +157,64 @@ object Runtime {
 
         @Synchronized
         fun text(): String = data.toString()
+    }
+
+    /**
+     * Установка rootfs из локального архива или URL.
+     * Распаковка идёт в staging, затем атомарное переименование.
+     */
+    fun installRootfs(context: Context, source: File? = null, url: String? = null): JSONObject {
+        val target = rootfsDir(context)
+        if (target.resolve("bin/sh").exists()) {
+            return JSONObject().put("ok", true).put("already", true).put("path", target.absolutePath)
+        }
+        val staging = File(context.filesDir, "rootfs-staging").apply {
+            if (exists()) deleteRecursively()
+            mkdirs()
+        }
+        return try {
+            val archive = when {
+                source != null && source.isFile -> source
+                !url.isNullOrBlank() -> {
+                    val tmp = File(context.cacheDir, "rootfs.tar.gz")
+                    val res = Net.download(url, tmp)
+                    if (res.isFailure) {
+                        return JSONObject()
+                            .put("ok", false)
+                            .put("error", res.exceptionOrNull()?.message ?: "Не удалось скачать rootfs")
+                    }
+                    tmp
+                }
+                else -> return JSONObject().put("ok", false).put("error", "Нет источника rootfs")
+            }
+            val stream = if (archive.name.endsWith(".gz")) {
+                java.util.zip.GZIPInputStream(archive.inputStream())
+            } else {
+                archive.inputStream()
+            }
+            stream.use { Tar.extract(it, staging) }
+            if (!File(staging, "bin/sh").exists()) {
+                staging.deleteRecursively()
+                return JSONObject().put("ok", false).put("error", "Архив не содержит bin/sh")
+            }
+            File(staging, "workspace").mkdirs()
+            File(staging, "etc").mkdirs()
+            File(staging, "etc/resolv.conf").writeText("nameserver 1.1.1.1\nnameserver 8.8.8.8\n")
+            if (target.exists()) target.deleteRecursively()
+            if (!staging.renameTo(target)) {
+                staging.copyRecursively(target, overwrite = true)
+                staging.deleteRecursively()
+            }
+            JSONObject().put("ok", true).put("path", target.absolutePath)
+        } catch (t: Throwable) {
+            staging.deleteRecursively()
+            JSONObject().put("ok", false).put("error", t.message ?: "Ошибка установки rootfs")
+        }
+    }
+
+    fun removeRootfs(context: Context): JSONObject {
+        val dir = rootfsDir(context)
+        return JSONObject().put("ok", dir.deleteRecursively())
     }
 
     fun listRootfsCandidates(): JSONArray = JSONArray()

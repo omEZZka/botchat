@@ -142,6 +142,43 @@ object Net {
         return Handle { cancelled.set(true); thread.interrupt() }
     }
 
+    /**
+     * Бинарная загрузка с прогрессом и лимитом размера. Только GET.
+     */
+    fun download(url: String, target: java.io.File, maxBytes: Long = 512L * 1024 * 1024): Result<Long> {
+        return try {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", userAgent())
+                .get()
+                .build()
+            client.newCall(request).execute().use { res ->
+                if (!res.isSuccessful) {
+                    return Result.failure(NetException(res.code, friendly(res.code, ""), res.code >= 500))
+                }
+                val body = res.body ?: return Result.failure(IOException("empty body"))
+                val length = body.contentLength()
+                if (length > maxBytes) return Result.failure(IOException("слишком большой файл"))
+                target.parentFile?.mkdirs()
+                val tmp = java.io.File(target.parentFile, ".${target.name}.part")
+                body.byteStream().use { input ->
+                    tmp.outputStream().use { out -> input.copyTo(out) }
+                }
+                if (tmp.length() > maxBytes) {
+                    tmp.delete()
+                    return Result.failure(IOException("слишком большой файл"))
+                }
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                    tmp.delete()
+                }
+                Result.success(target.length())
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     fun friendly(code: Int, body: String): String {
         val detail = body.take(300).replace(Regex("\\s+"), " ").trim()
         return when (code) {

@@ -63,8 +63,17 @@ object Api {
                 JSONObject().put("ok", true)
             }
             "runtime.info" -> Runtime.envInfo(context).put("ok", true)
-            "runtime.attach" -> JSONObject().put("ok", true)
-            "runtime.input" -> JSONObject().put("ok", true)
+            "runtime.install" -> Runtime.installRootfs(context, null, payload.optString("url").ifBlank { null })
+            "runtime.remove" -> Runtime.removeRootfs(context)
+            "runtime.attach" -> TermSession.attach(context, payload.optString("chatId"))
+            "runtime.input" -> TermSession.input(
+                payload.optString("chatId"),
+                payload.optString("data")
+            )
+            "runtime.close" -> {
+                TermSession.close(payload.optString("chatId"))
+                JSONObject().put("ok", true)
+            }
             "checkpoints.list" -> Checkpoints.list(context, payload.optString("chatId"))
             "checkpoints.restore" -> Checkpoints.restore(
                 context,

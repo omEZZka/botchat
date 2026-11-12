@@ -139,10 +139,40 @@ const FilesUI = (() => {
     setTimeout(async () => {
       const env = await Native.api('runtime.info');
       if (!env || !env.ok || !env.bash) {
-        status.textContent = 'rootfs не установлен: bash недоступен. Остальные инструменты работают.';
+        U.clear(status);
+        status.appendChild(U.el('p', { class: 'muted small', text: 'rootfs не установлен: bash недоступен. Остальные инструменты работают.' }));
+        const url = U.el('input', {
+          class: 'field', type: 'url',
+          placeholder: 'URL архива rootfs (tar.gz)',
+          value: (S.settings.rootfsUrl || ''),
+        });
+        const install = U.el('button', {
+          class: 'btn small primary', text: 'Установить rootfs',
+          onclick: async () => {
+            if (!url.value.trim()) {
+              Render.toast('Укажите URL архива');
+              return;
+            }
+            Store.setSetting('rootfsUrl', url.value.trim());
+            install.disabled = true;
+            install.textContent = 'Устанавливаю…';
+            const res = await Native.api('runtime.install', { url: url.value.trim() });
+            install.disabled = false;
+            install.textContent = 'Установить rootfs';
+            if (res && res.ok) {
+              Render.toast('rootfs установлен');
+              Render.closeSheet();
+              openTerminal();
+            } else {
+              Render.toast((res && res.error) || 'Не удалось установить rootfs');
+            }
+          },
+        });
+        status.appendChild(url);
+        status.appendChild(install);
         return;
       }
-      status.textContent = 'proot · ' + (env.distro || 'Ubuntu arm64');
+      status.textContent = 'proot · Ubuntu arm64 · ' + U.bytes(env.size || 0);
       mountTerminal(mount, status);
     }, 60);
   };
@@ -174,14 +204,14 @@ const FilesUI = (() => {
     presentBanner(term);
     term.write('\r\n$ ');
     const onData = (data) => {
-      Native.api('runtime.input', { data });
-      if (data === '\r') term.write('\r\n$ ');
-      else term.write(data);
+      Native.api('runtime.input', { chatId: S.chatId, data });
     };
     term.onData(onData);
-    Native.api('runtime.attach', {});
+    Native.api('runtime.attach', { chatId: S.chatId });
     termSocketCleanup = Native.on('term.output', (payload) => {
-      if (payload && payload.data) term.write(payload.data);
+      if (payload && payload.data && (!payload.chatId || payload.chatId === S.chatId)) {
+        term.write(payload.data);
+      }
     });
   };
 
@@ -194,6 +224,7 @@ const FilesUI = (() => {
   const dispose = () => {
     if (termSocketCleanup) termSocketCleanup();
     termSocketCleanup = null;
+    if (S.chatId) Native.api('runtime.close', { chatId: S.chatId });
     if (terminal) {
       terminal.dispose();
       terminal = null;
