@@ -89,7 +89,8 @@ object ChatEngine {
         modelId: String
     ) {
         val system = payload.optString("system")
-        val messages = payload.optJSONArray("messages") ?: JSONArray()
+        val messages = withImages(payload.optJSONArray("messages") ?: JSONArray(), payload.optJSONArray("images"))
+        val images = payload.optJSONArray("images")
         val toolsEnabled = payload.optBoolean("tools", true)
         val planOnly = payload.optBoolean("planOnly", false)
         var lastError = "Не удалось получить ответ"
@@ -313,6 +314,18 @@ object ChatEngine {
         val args: StringBuilder = StringBuilder()
     }
 
+    private fun withImages(messages: JSONArray, images: JSONArray?): JSONArray {
+        if (images == null || images.length() == 0) return messages
+        var lastUser = -1
+        for (i in 0 until messages.length()) {
+            if (messages.getJSONObject(i).optString("role") == "user") lastUser = i
+        }
+        if (lastUser < 0) return messages
+        val target = messages.getJSONObject(lastUser)
+        target.put("images", images)
+        return messages
+    }
+
     private fun parseArgs(raw: String): JSONObject {
         val text = raw.trim()
         if (text.isEmpty()) return JSONObject()
@@ -382,6 +395,26 @@ object ChatEngine {
                             .put("content", m.optString("content", ""))
                             .put("tool_calls", serialized)
                     )
+                    continue
+                }
+                val imgs = m.optJSONArray("images")
+                if (imgs != null && imgs.length() > 0) {
+                    val content = JSONArray()
+                    if (m.optString("content").isNotBlank()) {
+                        content.put(JSONObject().put("type", "text").put("text", m.optString("content")))
+                    }
+                    for (j in 0 until imgs.length()) {
+                        val img = imgs.getJSONObject(j)
+                        content.put(
+                            JSONObject()
+                                .put("type", "image_url")
+                                .put(
+                                    "image_url",
+                                    JSONObject().put("url", img.optString("dataUrl"))
+                                )
+                        )
+                    }
+                    arr.put(JSONObject().put("role", role).put("content", content))
                     continue
                 }
                 arr.put(
@@ -478,6 +511,33 @@ object ChatEngine {
                         )
                     }
                     arr.put(JSONObject().put("role", "assistant").put("content", content))
+                    continue
+                }
+                val imgs = m.optJSONArray("images")
+                if (imgs != null && imgs.length() > 0) {
+                    val content = JSONArray()
+                    for (j in 0 until imgs.length()) {
+                        val img = imgs.getJSONObject(j)
+                        val dataUrl = img.optString("dataUrl")
+                        val comma = dataUrl.indexOf(',')
+                        val media = img.optString("mime", "image/png")
+                        val b64 = if (comma >= 0) dataUrl.substring(comma + 1) else dataUrl
+                        content.put(
+                            JSONObject()
+                                .put("type", "image")
+                                .put(
+                                    "source",
+                                    JSONObject()
+                                        .put("type", "base64")
+                                        .put("media_type", media)
+                                        .put("data", b64)
+                                )
+                        )
+                    }
+                    if (m.optString("content").isNotBlank()) {
+                        content.put(JSONObject().put("type", "text").put("text", m.optString("content")))
+                    }
+                    arr.put(JSONObject().put("role", "user").put("content", content))
                     continue
                 }
                 arr.put(
@@ -578,6 +638,29 @@ object ChatEngine {
                         )
                     }
                     contents.put(JSONObject().put("role", "model").put("parts", parts))
+                    continue
+                }
+                val imgs = m.optJSONArray("images")
+                if (imgs != null && imgs.length() > 0) {
+                    val parts = JSONArray()
+                    for (j in 0 until imgs.length()) {
+                        val img = imgs.getJSONObject(j)
+                        val dataUrl = img.optString("dataUrl")
+                        val comma = dataUrl.indexOf(',')
+                        val b64 = if (comma >= 0) dataUrl.substring(comma + 1) else dataUrl
+                        parts.put(
+                            JSONObject().put(
+                                "inlineData",
+                                JSONObject()
+                                    .put("mimeType", img.optString("mime", "image/png"))
+                                    .put("data", b64)
+                            )
+                        )
+                    }
+                    if (m.optString("content").isNotBlank()) {
+                        parts.put(JSONObject().put("text", m.optString("content")))
+                    }
+                    contents.put(JSONObject().put("role", "user").put("parts", parts))
                     continue
                 }
                 contents.put(

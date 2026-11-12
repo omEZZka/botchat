@@ -100,9 +100,9 @@ const Agent = (() => {
     });
     try {
       if (mode === 'chat') {
-        await streamOnce(chatId, assistantMsg, { tools: false });
+        await streamOnce(chatId, assistantMsg, { tools: false, attachments: latestAttachments(chatId) });
       } else if (mode === 'plan') {
-        await streamOnce(chatId, assistantMsg, { tools: false, planOnly: true });
+        await streamOnce(chatId, assistantMsg, { tools: false, planOnly: true, attachments: latestAttachments(chatId) });
       } else {
         await agentLoop(chatId, assistantMsg);
       }
@@ -250,6 +250,14 @@ const Agent = (() => {
     }
   };
 
+  const latestAttachments = (chatId) => {
+    const list = Store.messages(chatId);
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i].role === 'user') return list[i].attachments || [];
+    }
+    return [];
+  };
+
   const contextUsage = (chatId) => {
     const chat = Store.getChat(chatId);
     const list = Store.messages(chatId);
@@ -305,6 +313,14 @@ const Agent = (() => {
     const chat = ctx.chat;
     const providerId = chat.provider || S.settings.activeProvider;
     const modelId = chat.model || S.settings.activeModel;
+    const images = [];
+    if (options.attachments && options.attachments.length) {
+      options.attachments.forEach((att) => {
+        if ((att.mime || '').startsWith('image/') && att.dataUrl) {
+          images.push({ mime: att.mime, dataUrl: att.dataUrl });
+        }
+      });
+    }
     const requestId = U.uid('req');
     const fallback = buildFallback(providerId, modelId);
     let buffer = '';
@@ -313,6 +329,11 @@ const Agent = (() => {
 
     if (!modelId) {
       throw new Error('Модель не выбрана. Откройте «Модель» и выберите провайдера.');
+    }
+
+    if (images.length) {
+      const last = ctx.history[ctx.history.length - 1];
+      if (last) last.images = images;
     }
 
     const offDelta = Native.on('llm.delta', (payload) => {
@@ -347,6 +368,7 @@ const Agent = (() => {
       maxSteps: active ? active.limit : 1,
       step: options.toolStep || 0,
       fallbackModels: fallback,
+      images: options.images || [],
     });
     if (!res || !res.ok) {
       offDelta(); offTool(); offDone(); offError();
