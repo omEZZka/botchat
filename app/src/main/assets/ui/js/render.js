@@ -398,6 +398,7 @@ const Render = (() => {
         onclick: () => scrollToBottom(true),
       }, [Icons.make('down', 18), U.el('span', { class: 'scroll-count', id: 'scroll-count' })]);
       chatViewEl.appendChild(down);
+      chatViewEl.appendChild(U.el('div', { class: 'pending-host', id: 'pending-host', hidden: 'hidden' }));
       chatViewEl.appendChild(Composer.build());
       view.appendChild(chatViewEl);
       lastChatId = chat.id;
@@ -410,6 +411,7 @@ const Render = (() => {
     }
     renderMessages(list, isNewChat || list.length !== lastMessageCount);
     renderProgress();
+    renderPending();
     if (isNewChat || nearBottom) scrollToBottom(false);
     lastMessageCount = list.length;
     Composer.sync();
@@ -459,6 +461,58 @@ const Render = (() => {
         ]));
       });
       bar.appendChild(panel);
+    }
+  };
+
+  const renderPending = () => {
+    const host = U.$('#pending-host');
+    if (!host) return;
+    const pending = S.pending;
+    if (!pending) {
+      host.hidden = true;
+      U.clear(host);
+      return;
+    }
+    host.hidden = false;
+    U.clear(host);
+    if (pending.type === 'permission') {
+      const call = pending.call || {};
+      const args = call.args || {};
+      const detail = call.name === 'bash' ? (args.command || '') : (args.path || args.url || '');
+      host.appendChild(U.el('div', { class: 'pending-card' }, [
+        U.el('div', { class: 'pending-head' }, [
+          Icons.make('shield', 16),
+          U.el('span', { text: 'Нужно разрешение: ' + call.name }),
+        ]),
+        detail ? U.el('pre', { class: 'pending-detail' }, [U.el('code', { text: detail })]) : null,
+        U.el('div', { class: 'pending-actions' }, [
+          U.el('button', {
+            class: 'btn small primary', text: 'Разрешить раз',
+            onclick: () => Actions.resolvePermission('allow'),
+          }),
+          U.el('button', {
+            class: 'btn small', text: 'Всегда',
+            onclick: () => Actions.resolvePermission('always'),
+          }),
+          U.el('button', {
+            class: 'btn small danger-ghost', text: 'Отклонить',
+            onclick: () => Actions.resolvePermission('deny'),
+          }),
+        ]),
+      ]));
+      return;
+    }
+    if (pending.type === 'choice') {
+      const card = U.el('div', { class: 'pending-card' }, [
+        U.el('div', { class: 'pending-head' }, [Icons.make('sparkle', 16), U.el('span', { text: pending.title || 'Выберите вариант' })]),
+      ]);
+      (pending.options || []).forEach((option) => {
+        card.appendChild(U.el('button', {
+          class: 'btn small full', text: option.label || option,
+          onclick: () => Actions.resolvePermission(option.value || option),
+        }));
+      });
+      host.appendChild(card);
     }
   };
 
@@ -914,7 +968,9 @@ const Render = (() => {
     Bus.on('agent:changed', () => {
       renderProgress();
       renderTabbar();
+      renderPending();
     });
+    Bus.on('permission:changed', () => renderPending());
     Bus.on('message:updated', ({ chatId, message }) => {
       if (chatId === S.chatId) patchMessage(message);
     });
