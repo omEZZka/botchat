@@ -20,6 +20,7 @@ const Agent = (() => {
     messages: [],
     todos: [],
     tasks: [],
+    context: [],
     startedAt: Date.now(),
   });
 
@@ -124,6 +125,11 @@ const Agent = (() => {
         await appendNote(chatId, message, null);
         return;
       }
+      active.context.push({
+        role: 'assistant',
+        content: outcome.text || '',
+        toolCalls: outcome.toolCalls.map((c) => ({ id: c.id, name: c.name, args: c.args || {} })),
+      });
       for (const call of outcome.toolCalls) {
         if (active.cancelled) return;
         await waitIfPaused();
@@ -133,6 +139,12 @@ const Agent = (() => {
         if (result && result.checkpoint) {
           await Store.updateMessage(chatId, message.id, { checkpoint: result.checkpoint }, { silent: true });
         }
+        active.context.push({
+          role: 'tool',
+          toolCallId: call.id,
+          name: call.name,
+          content: (result && (result.output || result.error)) || '',
+        });
       }
     }
     await appendNote(chatId, message, 'Достигнут лимит шагов (' + active.limit + ')');
@@ -183,6 +195,10 @@ const Agent = (() => {
 
   const buildContext = (chatId, options) => {
     const chat = Store.getChat(chatId);
+    if (active && active.context) {
+      const system = systemPrompt(chat, options || {});
+      return { system, history: active.context.slice(), chat };
+    }
     const list = Store.messages(chatId);
     const keep = (options && options.keep) || 40;
     const history = list
@@ -284,8 +300,16 @@ const Agent = (() => {
   };
 
   const addToolCard = async (chatId, message, call) => {
+    let baseId = call.id || U.uid('tool');
+    const used = new Set((message.tools || []).map((t) => t.id));
+    let toolId = baseId;
+    let suffix = 1;
+    while (used.has(toolId)) {
+      toolId = baseId + '_' + suffix;
+      suffix += 1;
+    }
     const tool = {
-      id: call.id || U.uid('tool'),
+      id: toolId,
       name: call.name,
       input: call.args || {},
       output: '',
@@ -300,9 +324,20 @@ const Agent = (() => {
     return tool;
   };
 
+  const findToolHost = (chatId, tool) => {
+    const list = Store.messages(chatId);
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const msg = list[i];
+      if (msg.tools && msg.tools.some((t) => t.id === tool.id)) return msg;
+    }
+    return null;
+  };
+
   const updateTool = async (chatId, message, tool, patch) => {
     Object.assign(tool, patch);
-    await Store.updateMessage(chatId, message.id, { tools: message.tools }, { silent: true });
+    const host = message || findToolHost(chatId, tool);
+    if (!host) return;
+    await Store.updateMessage(chatId, host.id, { tools: host.tools }, { silent: true });
     Bus.emit('render');
   };
 

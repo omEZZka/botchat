@@ -310,9 +310,44 @@ object ChatEngine {
             }
             for (i in 0 until messages.length()) {
                 val m = messages.getJSONObject(i)
+                val role = m.optString("role", "user")
+                if (role == "tool") {
+                    arr.put(
+                        JSONObject()
+                            .put("role", "tool")
+                            .put("tool_call_id", m.optString("toolCallId"))
+                            .put("content", m.optString("content", ""))
+                    )
+                    continue
+                }
+                val calls = m.optJSONArray("toolCalls")
+                if (role == "assistant" && calls != null && calls.length() > 0) {
+                    val serialized = JSONArray()
+                    for (j in 0 until calls.length()) {
+                        val call = calls.getJSONObject(j)
+                        serialized.put(
+                            JSONObject()
+                                .put("id", call.optString("id"))
+                                .put("type", "function")
+                                .put(
+                                    "function",
+                                    JSONObject()
+                                        .put("name", call.optString("name"))
+                                        .put("arguments", call.optJSONObject("args")?.toString() ?: "{}")
+                                )
+                        )
+                    }
+                    arr.put(
+                        JSONObject()
+                            .put("role", "assistant")
+                            .put("content", m.optString("content", ""))
+                            .put("tool_calls", serialized)
+                    )
+                    continue
+                }
                 arr.put(
                     JSONObject()
-                        .put("role", m.optString("role", "user"))
+                        .put("role", role)
                         .put("content", m.optString("content", ""))
                 )
             }
@@ -370,10 +405,45 @@ object ChatEngine {
             val systemText = if (planOnly) system + "\nТолько план, без вызова инструментов." else system
             for (i in 0 until messages.length()) {
                 val m = messages.getJSONObject(i)
-                val role = if (m.optString("role") == "assistant") "assistant" else "user"
+                val role = m.optString("role")
+                if (role == "tool") {
+                    arr.put(
+                        JSONObject()
+                            .put("role", "user")
+                            .put(
+                                "content",
+                                JSONArray().put(
+                                    JSONObject()
+                                        .put("type", "tool_result")
+                                        .put("tool_use_id", m.optString("toolCallId"))
+                                        .put("content", m.optString("content", ""))
+                                )
+                            )
+                    )
+                    continue
+                }
+                val calls = m.optJSONArray("toolCalls")
+                if (role == "assistant" && calls != null && calls.length() > 0) {
+                    val content = JSONArray()
+                    if (m.optString("content").isNotBlank()) {
+                        content.put(JSONObject().put("type", "text").put("text", m.optString("content")))
+                    }
+                    for (j in 0 until calls.length()) {
+                        val call = calls.getJSONObject(j)
+                        content.put(
+                            JSONObject()
+                                .put("type", "tool_use")
+                                .put("id", call.optString("id"))
+                                .put("name", call.optString("name"))
+                                .put("input", call.optJSONObject("args") ?: JSONObject())
+                        )
+                    }
+                    arr.put(JSONObject().put("role", "assistant").put("content", content))
+                    continue
+                }
                 arr.put(
                     JSONObject()
-                        .put("role", role)
+                        .put("role", if (role == "assistant") "assistant" else "user")
                         .put("content", m.optString("content", ""))
                 )
             }
@@ -429,9 +499,51 @@ object ChatEngine {
             val contents = JSONArray()
             for (i in 0 until messages.length()) {
                 val m = messages.getJSONObject(i)
+                val role = m.optString("role")
+                if (role == "tool") {
+                    contents.put(
+                        JSONObject()
+                            .put("role", "user")
+                            .put(
+                                "parts",
+                                JSONArray().put(
+                                    JSONObject().put(
+                                        "functionResponse",
+                                        JSONObject()
+                                            .put("name", m.optString("name", "tool"))
+                                            .put(
+                                                "response",
+                                                JSONObject().put("result", m.optString("content", ""))
+                                            )
+                                    )
+                                )
+                            )
+                    )
+                    continue
+                }
+                val calls = m.optJSONArray("toolCalls")
+                if (role == "assistant" && calls != null && calls.length() > 0) {
+                    val parts = JSONArray()
+                    if (m.optString("content").isNotBlank()) {
+                        parts.put(JSONObject().put("text", m.optString("content")))
+                    }
+                    for (j in 0 until calls.length()) {
+                        val call = calls.getJSONObject(j)
+                        parts.put(
+                            JSONObject().put(
+                                "functionCall",
+                                JSONObject()
+                                    .put("name", call.optString("name"))
+                                    .put("args", call.optJSONObject("args") ?: JSONObject())
+                            )
+                        )
+                    }
+                    contents.put(JSONObject().put("role", "model").put("parts", parts))
+                    continue
+                }
                 contents.put(
                     JSONObject()
-                        .put("role", if (m.optString("role") == "assistant") "model" else "user")
+                        .put("role", if (role == "assistant") "model" else "user")
                         .put("parts", JSONArray().put(JSONObject().put("text", m.optString("content", ""))))
                 )
             }

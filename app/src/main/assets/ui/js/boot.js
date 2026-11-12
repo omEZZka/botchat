@@ -194,8 +194,7 @@ const Onboarding = (() => {
       ],
     });
 
-    renderStep();
-    void done;
+    void next;
   };
 
   return { open };

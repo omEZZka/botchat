@@ -464,10 +464,14 @@ const Render = (() => {
 
   const scrollToBottom = (smooth) => {
     if (!chatListEl) return;
-    chatListEl.scrollTo({
-      top: chatListEl.scrollHeight,
-      behavior: smooth && !U.isReducedMotion() ? 'smooth' : 'auto',
-    });
+    if (typeof chatListEl.scrollTo === 'function') {
+      chatListEl.scrollTo({
+        top: chatListEl.scrollHeight,
+        behavior: smooth && !U.isReducedMotion() ? 'smooth' : 'auto',
+      });
+    } else {
+      chatListEl.scrollTop = chatListEl.scrollHeight;
+    }
     nearBottom = true;
     const btn = U.$('.scroll-down');
     if (btn) btn.classList.remove('show');
@@ -520,8 +524,17 @@ const Render = (() => {
     }
     const status = node.querySelector('.msg-status');
     if (status) status.innerHTML = statusHtml(msg);
-    const tools = node.querySelector('.tool-cards');
-    if (tools) renderToolCards(tools, msg);
+    let tools = node.querySelector('.tool-cards');
+    if (msg.tools && msg.tools.length) {
+      if (!tools) {
+        const bubble = node.querySelector('.bubble');
+        if (bubble) {
+          tools = U.el('div', { class: 'tool-cards' });
+          bubble.appendChild(tools);
+        }
+      }
+      if (tools) renderToolCards(tools, msg);
+    }
     const streamTail = U.$('#typing');
     if (msg.streaming && !streamTail && chatListEl) {
       chatListEl.appendChild(U.el('div', { class: 'typing', id: 'typing' }, [

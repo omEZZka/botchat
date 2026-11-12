@@ -246,7 +246,13 @@ const Store = (() => {
       await createChat({ title: 'Новый чат', silent: true });
     }
     S.chatId = S.chats[0] ? S.chats[0].id : null;
-    if (S.chatId) await openChat(S.chatId, { initial: true });
+    if (S.chatId) {
+      await Db.messagesOfChat(S.chatId, (rows) => {
+        S.messages.set(S.chatId, (rows || []).sort((a, b) => a.ts - b.ts));
+      });
+      if (!S.messages.has(S.chatId)) S.messages.set(S.chatId, []);
+    }
+    S.screen = 'list';
     S.booted = true;
     Bus.emit('state:ready', S);
   };

@@ -16,7 +16,20 @@ const ProvidersUI = (() => {
     }
     const cat = await Native.api('providers.catalog');
     if (cat && cat.ok) S.providers = cat.providers || S.providers;
+    ensureDefaultModel();
     Bus.emit('providers:changed', S.providers);
+
+  };
+
+  const ensureDefaultModel = () => {
+    if (S.settings.activeModel) return;
+    const models = S.models || [];
+    if (!models.length) return;
+    const preferred = models.find((m) => m.provider === (S.settings.activeProvider || 'opencode')) || models[0];
+    if (!preferred) return;
+    S.settings.activeProvider = preferred.provider || S.settings.activeProvider;
+    S.settings.activeModel = preferred.id;
+    Settings.write(S.settings);
   };
 
   const providerCard = (provider) => {
