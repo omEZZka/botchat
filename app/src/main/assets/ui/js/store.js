@@ -55,6 +55,7 @@ const Settings = (() => {
     sendOnEnter: false,
     windowSize: 60,
     fallbackChain: [],
+    autoFree: true,
     compact: false,
     overlay: false,
     rootfsUrl: '',

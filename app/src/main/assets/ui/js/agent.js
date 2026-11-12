@@ -351,7 +351,18 @@ const Agent = (() => {
     const offError = Native.on('llm.error', (payload) => {
       if (!payload || payload.requestId !== requestId) return;
       finished = true;
-      lastError = payload.message || 'Ошибка провайдера';
+      lastError = payload.message || 'Провайдер недоступен';
+    });
+    const offNotice = Native.on('llm.notice', (payload) => {
+      if (!payload || payload.requestId !== requestId) return;
+      ChatStream.notice(chatId, message.id, payload.message || '');
+    });
+    const offModel = Native.on('llm.model', (payload) => {
+      if (!payload || payload.requestId !== requestId) return;
+      if (payload.provider === providerId && payload.model === modelId) return;
+      const provider = (S.providers || []).find((p) => p.id === payload.provider);
+      const label = (provider ? provider.name + ' · ' : '') + payload.model;
+      ChatStream.switched(chatId, message.id, label);
     });
 
     let lastError = null;
@@ -367,6 +378,7 @@ const Agent = (() => {
       maxSteps: active ? active.limit : 1,
       step: options.toolStep || 0,
       fallbackModels: fallback,
+      autoFree: S.settings.autoFree !== false,
       images: options.images || [],
     });
     if (!res || !res.ok) {
@@ -382,7 +394,7 @@ const Agent = (() => {
       }
       await U.sleep(120);
     }
-    offDelta(); offTool(); offDone(); offError();
+    offDelta(); offTool(); offDone(); offError(); offNotice(); offModel();
 
     if (lastError) throw new Error(lastError);
     if (buffer.trim() || toolCalls.length) {

@@ -41,6 +41,11 @@ object Api {
                 JSONObject().put("ok", true)
             }
             "models.refresh" -> Models.refresh(context)
+            "quota.info" -> Quota.snapshot(context)
+            "quota.clear" -> {
+                Quota.clear(context, payload.optString("providerId"), payload.optString("modelId"))
+                JSONObject().put("ok", true)
+            }
             "chat.start" -> {
                 val chatId = payload.optString("chatId")
                 val step = payload.optInt("step", 0)

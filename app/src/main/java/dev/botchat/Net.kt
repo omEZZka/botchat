@@ -39,7 +39,7 @@ object Net {
         fun onDelta(text: String) {}
         fun onToolDelta(index: Int, id: String?, name: String?, argsDelta: String?) {}
         fun onFinish(reason: String?) {}
-        fun onError(message: String, retryable: Boolean, status: Int) {}
+        fun onError(message: String, retryable: Boolean, status: Int, retryAfterMs: Long = -1L) {}
     }
 
     class Handle internal constructor(private val stop: () -> Unit) {
@@ -80,7 +80,8 @@ object Net {
                             NetException(
                                 res.code,
                                 friendly(res.code, text),
-                                res.code == 429 || res.code >= 500
+                                res.code == 429 || res.code >= 500,
+                                retryAfterMs(res)
                             )
                         )
                     }
@@ -117,7 +118,12 @@ object Net {
                 call.execute().use { res ->
                     if (!res.isSuccessful) {
                         val err = res.body?.string() ?: ""
-                        cb.onError(friendly(res.code, err), res.code == 429 || res.code >= 500, res.code)
+                        cb.onError(
+                            friendly(res.code, err),
+                            res.code == 429 || res.code >= 500,
+                            res.code,
+                            retryAfterMs(res)
+                        )
                         return@use
                     }
                     val source = res.body?.source() ?: return@use
@@ -191,7 +197,45 @@ object Net {
         }
     }
 
-    class NetException(val code: Int, override val message: String, val retryable: Boolean) : IOException(message)
+    /**
+     * Разбирает подсказку провайдера о паузе: Retry-After (сек/дата),
+     * X-RateLimit-Reset (unix-время) и задержку из тела ошибки.
+     */
+    fun retryAfterMs(res: okhttp3.Response): Long {
+        val retryAfter = res.header("Retry-After")
+        if (!retryAfter.isNullOrBlank()) {
+            retryAfter.trim().toLongOrNull()?.let { seconds ->
+                return seconds.coerceIn(1, 900) * 1000
+            }
+            val date = retryAfter.trim()
+            runCatching {
+                val fmt = java.text.SimpleDateFormat(
+                    "EEE, dd MMM yyyy HH:mm:ss zzz",
+                    java.util.Locale.US
+                )
+                val target = fmt.parse(date)?.time ?: 0L
+                val delta = target - System.currentTimeMillis()
+                if (delta > 0) return delta.coerceIn(1_000, 900_000)
+            }
+        }
+        val reset = res.header("X-RateLimit-Reset")
+        if (!reset.isNullOrBlank()) {
+            reset.trim().toLongOrNull()?.let { epoch ->
+                val delta = epoch * 1000 - System.currentTimeMillis()
+                if (delta > 0) return delta.coerceIn(1_000, 900_000)
+            }
+        }
+        val remaining = res.header("X-RateLimit-Remaining")
+        if (remaining == "0") return 5_000
+        return -1L
+    }
+
+    class NetException(
+        val code: Int,
+        override val message: String,
+        val retryable: Boolean,
+        val retryAfterMs: Long = -1L
+    ) : IOException(message)
 
     fun isOnline(context: Context): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE)

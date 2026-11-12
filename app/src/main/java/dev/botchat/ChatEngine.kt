@@ -19,6 +19,9 @@ object ChatEngine {
 
     private val runs = ConcurrentHashMap<String, Run>()
 
+    /** Сколько раз повторяем упёршуюся в квоту модель, прежде чем идти по fallback. */
+    private const val QUOTA_WAVES = 3
+
     fun start(context: Context, payload: JSONObject): JSONObject {
         val chatId = payload.optString("chatId")
         val requestId = payload.optString("requestId")
@@ -114,45 +117,115 @@ object ChatEngine {
             }
         }
 
-        for ((candidateProvider, candidateModel) in candidates) {
+        // Бесплатные модели подключаются автоматически: при квоте диалог
+        // продолжается на следующей доступной, а не обрывается.
+        if (payload.optBoolean("autoFree", true)) {
+            Providers.all(context)
+                .filter { !it.needsKey && it.id != provider.id }
+                .forEach { freeProvider ->
+                    val models = Providers.defaultModels(freeProvider.id)
+                    val cached = Models.cached(context)
+                    val fromCache = ArrayList<String>()
+                    for (i in 0 until cached.length()) {
+                        val item = cached.getJSONObject(i)
+                        if (item.optString("provider") == freeProvider.id) {
+                            fromCache.add(item.optString("id"))
+                        }
+                    }
+                    (fromCache.ifEmpty { models.map { it.id } }).forEach { model ->
+                        if (candidates.none { it.first.id == freeProvider.id && it.second == model }) {
+                            candidates.add(freeProvider to model)
+                        }
+                    }
+                }
+        }
+
+        var throttleWait = 0L
+        var lastRetryAfter = -1L
+        val ordered = Quota.order(context, candidates.map { it.first.id to it.second })
+            .mapNotNull { pair -> candidates.firstOrNull { it.first.id == pair.first && it.second == pair.second } }
+
+        for ((candidateProvider, candidateModel) in ordered) {
+            val knownWait = Quota.remaining(context, candidateProvider.id, candidateModel)
+            if (knownWait > 0 && candidates.size > 1) {
+                // Модель недавно упёрлась в квоту — не тратим на неё попытку.
+                lastRetryAfter = maxOf(lastRetryAfter, knownWait)
+                lastError = "Квота: " + candidateProvider.name + " · " + candidateModel
+                continue
+            }
             if (run.cancelled.get()) return
             val keys = Secrets.keyRing(context, candidateProvider.id)
             val attemptKeys: List<String?> = if (keys.isEmpty()) listOf(null) else keys
             var modelDone = false
-            for (key in attemptKeys) {
-                if (run.cancelled.get()) return
-                if (candidateProvider.needsKey && key == null) {
-                    lastError = if (candidateProvider.id == provider.id) {
-                        "Введите API-ключ в настройках провайдера"
-                    } else {
-                        "Нет ключа для " + candidateProvider.name
+
+            // Волна повторов: при квоте ждём подсказку провайдера и пробуем ещё раз,
+            // не обрывая диалог. Лимит волн защищает от бесконечного ожидания.
+            var wave = 0
+            while (!succeeded && !modelDone && wave < QUOTA_WAVES) {
+                val exhaustedKeys = ArrayList<String?>()
+                for (key in attemptKeys) {
+                    if (run.cancelled.get()) return
+                    if (candidateProvider.needsKey && key == null) {
+                        lastError = if (candidateProvider.id == provider.id) {
+                            "Введите API-ключ в настройках провайдера"
+                        } else {
+                            "Нет ключа для " + candidateProvider.name
+                        }
+                        modelDone = true
+                        break
+                    }
+                    if (exhaustedKeys.any { it != null && it == key }) continue
+                    current = Triple(candidateProvider, candidateModel, key)
+                    val outcome = attempt(
+                        context, host, run, candidateProvider, key, requestId, system, messages,
+                        toolsEnabled, planOnly, candidateModel
+                    )
+                    if (outcome.ok) {
+                        succeeded = true
+                        Quota.clear(context, candidateProvider.id, candidateModel)
+                        break
+                    }
+                    lastError = outcome.error
+                    if (outcome.status == 429) {
+                        lastRetryAfter = outcome.retryAfterMs
+                        Quota.markLimited(
+                            context,
+                            candidateProvider.id,
+                            candidateModel,
+                            outcome.retryAfterMs
+                        )
+                        if (key != null) {
+                            exhaustedKeys.add(key)
+                            Secrets.rotate(context, candidateProvider.id, key)
+                            continue
+                        }
+                        break
+                    }
+                    if (!outcome.retryable) {
+                        modelDone = true
+                        break
                     }
                     break
                 }
-                current = Triple(candidateProvider, candidateModel, key)
-                val outcome = attempt(
-                    context, host, run, candidateProvider, key, requestId, system, messages,
-                    toolsEnabled, planOnly, candidateModel
-                )
-                if (outcome.ok) {
-                    succeeded = true
-                    modelDone = true
-                    break
+                if (succeeded || modelDone) break
+                // Все ключи/модель упёрлись в квоту: пауза и новая волна.
+                wave += 1
+                if (wave < QUOTA_WAVES) {
+                    val wait = quotaWait(lastRetryAfter, wave)
+                    throttleWait += wait
+                    emitNotice(
+                        host,
+                        requestId,
+                        "Квота исчерпана. Повтор через " + (wait / 1000) + " с"
+                    )
+                    if (!sleepCancellable(run, wait)) return
                 }
-                lastError = outcome.error
-                if (outcome.status == 429 && key != null) {
-                    Secrets.rotate(context, candidateProvider.id, key)
-                    continue
-                }
-                if (!outcome.retryable) {
-                    modelDone = true
-                    break
-                }
-                // Идемпотентные повторы уже сделаны внутри Net; здесь — смена ключа или модели.
+            }
+            if (succeeded || modelDone) continue
+            if (candidates.lastOrNull() != candidateProvider to candidateModel && lastRetryAfter > 0) {
+                // Уходим на резервную модель, но помним, что основная была ограничена.
                 continue
             }
-            if (succeeded) break
-            if (modelDone) continue
         }
         if (succeeded) {
             runCatching {
@@ -177,7 +250,37 @@ object ChatEngine {
         runs.remove(chatId)
     }
 
-    private class Outcome(val ok: Boolean, val retryable: Boolean, val status: Int, val error: String)
+    private fun quotaWait(retryAfterMs: Long, wave: Int): Long {
+        if (retryAfterMs > 0) return retryAfterMs.coerceIn(1_000, 900_000)
+        val backoff = 2_000L * (1L shl (wave - 1).coerceAtMost(4))
+        return backoff.coerceAtMost(30_000)
+    }
+
+    private fun sleepCancellable(run: Run, ms: Long): Boolean {
+        val until = System.currentTimeMillis() + ms
+        while (System.currentTimeMillis() < until) {
+            if (run.cancelled.get()) return false
+            Thread.sleep(80)
+        }
+        return !run.cancelled.get()
+    }
+
+    private fun emitNotice(host: BridgeHost, requestId: String, text: String) {
+        runCatching {
+            host.emit(
+                "llm.notice",
+                JSONObject().put("requestId", requestId).put("message", text)
+            )
+        }
+    }
+
+    private class Outcome(
+        val ok: Boolean,
+        val retryable: Boolean,
+        val status: Int,
+        val error: String,
+        val retryAfterMs: Long = -1L
+    )
 
     private fun attempt(
         context: Context,
@@ -221,9 +324,9 @@ object ChatEngine {
                 finished = true
             }
 
-            override fun onError(message: String, retryable: Boolean, status: Int) {
+            override fun onError(message: String, retryable: Boolean, status: Int, retryAfterMs: Long) {
                 finished = true
-                failure = Outcome(false, retryable, status, message)
+                failure = Outcome(false, retryable, status, message, retryAfterMs)
             }
         }
 

@@ -14,6 +14,8 @@ const ProvidersUI = (() => {
       S.models = res.models || S.models;
       S.customProviders = res.custom || [];
     }
+    const quota = await Native.api('quota.info');
+    S.quota = (quota && quota.ok && quota.limited) || {};
     const cat = await Native.api('providers.catalog');
     if (cat && cat.ok) S.providers = cat.providers || S.providers;
     ensureDefaultModel();
@@ -340,6 +342,10 @@ const ProvidersUI = (() => {
         class: 'btn small', text: 'Резерв',
         onclick: () => { Render.closeSheet(); openFallback(); },
       }),
+      U.el('button', {
+        class: 'btn small', text: 'Квоты',
+        onclick: () => { Render.closeSheet(); openQuota(); },
+      }),
       U.el('button', { class: 'btn small', text: 'Обновить', onclick: () => refreshModels(search.value) }),
     ]));
     const refreshModels = async (query) => {
@@ -355,6 +361,56 @@ const ProvidersUI = (() => {
     renderList('');
     Render.openSheet({ title: 'Модель', content });
     if (!(S.models || []).length) refreshModels('');
+  };
+
+  const openQuota = async () => {
+    const res = await Native.api('quota.info');
+    const content = U.el('div', { class: 'quota-sheet' });
+    content.appendChild(U.el('p', {
+      class: 'muted small',
+      text: 'Лимиты бесплатных моделей соблюдаются: при 429 приложение ждёт подсказку провайдера и продолжает диалог на следующей доступной модели. Здесь видно, кто на паузе.',
+    }));
+    const list = U.el('div', { class: 'quota-list' });
+    const limited = (res && res.limited) || {};
+    const keys = Object.keys(limited);
+    if (!keys.length) {
+      list.appendChild(U.el('p', { class: 'muted small', text: 'Все модели доступны' }));
+    }
+    keys.sort((a, b) => limited[a] - limited[b]).forEach((key) => {
+      const split = key.indexOf('|');
+      const providerId = split < 0 ? key : key.slice(0, split);
+      const modelId = split < 0 ? '' : key.slice(split + 1);
+      const provider = (S.providers || []).find((p) => p.id === providerId);
+      list.appendChild(U.el('div', { class: 'quota-row' }, [
+        U.el('span', {
+          class: 'quota-name',
+          text: (provider ? provider.name : providerId) + (modelId ? ' · ' + modelId : ''),
+        }),
+        U.el('span', { class: 'quota-wait', text: Math.ceil(limited[key] / 1000) + ' с' }),
+        U.el('button', {
+          class: 'link-btn', text: 'сбросить',
+          onclick: async () => {
+            await Native.api('quota.clear', { providerId, modelId });
+            Render.closeSheet();
+            openQuota();
+          },
+        }),
+      ]));
+    });
+    content.appendChild(list);
+    content.appendChild(U.el('button', {
+      class: 'btn primary full', text: 'Продолжать на бесплатных',
+      onclick: () => {
+        Store.setSetting('autoFree', true);
+        Render.closeSheet();
+        Render.toast('Автопереключение бесплатных моделей включено');
+      },
+    }));
+    content.appendChild(U.el('p', {
+      class: 'muted small',
+      text: 'Автопереключение сейчас: ' + (S.settings.autoFree !== false ? 'включено' : 'выключено'),
+    }));
+    Render.openSheet({ title: 'Квоты и лимиты', content });
   };
 
   const openFallback = () => {
@@ -466,7 +522,7 @@ const ProvidersUI = (() => {
   void state;
   return {
     load, openProvidersScreen, openModelSheet, openAddProvider, openProfiles,
-    openFallback, providerCard,
+    openFallback, openQuota, providerCard,
   };
 })();
 

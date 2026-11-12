@@ -280,7 +280,33 @@ const ChatStream = (() => {
     }
   };
 
-  return { update };
+  const notice = (chatId, messageId, text) => {
+    const node = U.$('[data-msg="' + messageId + '"]');
+    if (!node) return;
+    const bubble = node.querySelector('.bubble');
+    if (!bubble) return;
+    let box = bubble.querySelector('.stream-notice');
+    if (!box) {
+      box = U.el('div', { class: 'stream-notice' });
+      bubble.appendChild(box);
+    }
+    box.textContent = text;
+  };
+
+  const switched = (chatId, messageId, label) => {
+    const node = U.$('[data-msg="' + messageId + '"]');
+    if (!node) return;
+    const bubble = node.querySelector('.bubble');
+    if (!bubble) return;
+    let box = bubble.querySelector('.model-switch');
+    if (!box) {
+      box = U.el('div', { class: 'model-switch' });
+      bubble.appendChild(box);
+    }
+    box.textContent = 'Продолжено на ' + label;
+  };
+
+  return { update, notice, switched };
 })();
 
 window.Composer = Composer;
