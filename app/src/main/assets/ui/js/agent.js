@@ -83,10 +83,16 @@ const Agent = (() => {
     active.limit = chat.stepLimit || S.settings.stepLimit || 30;
     paused = false;
     AgentServiceKeepAlive(true, chatId);
+    const warning = warnContext(chatId);
     Store.setAgent({
       running: true, chatId, phase: 'plan', step: 0,
       total: active.limit, label: 'Подготовка', paused: false, tasks: [],
+      contextWarning: warning ? warning.text : '',
+      contextLevel: warning ? warning.level : '',
     });
+    if (warning && warning.level === 'critical') {
+      Render.toast(warning.text);
+    }
     await Store.touchChat(chatId, { status: 'running' });
     const assistantMsg = await Store.addMessage(chatId, {
       role: 'assistant', kind: 'text', text: '', status: 'streaming',
@@ -244,6 +250,26 @@ const Agent = (() => {
     }
   };
 
+  const contextUsage = (chatId) => {
+    const chat = Store.getChat(chatId);
+    const list = Store.messages(chatId);
+    const estimate = list.reduce((sum, m) => sum + Math.ceil((m.text || '').length / 4), 0);
+    const model = (S.models || []).find((m) => m.id === (chat && (chat.model || S.settings.activeModel)));
+    const limit = (model && model.context) || 128000;
+    return { tokens: estimate, limit, ratio: estimate / limit };
+  };
+
+  const warnContext = (chatId) => {
+    const usage = contextUsage(chatId);
+    if (usage.ratio >= 0.95) {
+      return { level: 'critical', text: 'Контекст почти исчерпан (' + Math.round(usage.ratio * 100) + '%). Сожмите сессию.' };
+    }
+    if (usage.ratio >= 0.8) {
+      return { level: 'warn', text: 'Контекст заполнен на ' + Math.round(usage.ratio * 100) + '%.' };
+    }
+    return null;
+  };
+
   const buildContext = (chatId, options) => {
     const chat = Store.getChat(chatId);
     if (active && active.context) {
@@ -251,7 +277,7 @@ const Agent = (() => {
       return { system, history: active.context.slice(), chat };
     }
     const list = Store.messages(chatId);
-    const keep = (options && options.keep) || 40;
+    const keep = (options && options.keep) || S.compactKeep || 40;
     const history = list
       .filter((m) => m.kind === 'text' && m.role !== 'system' && (m.text || '').trim())
       .slice(-keep)
@@ -527,7 +553,7 @@ const Agent = (() => {
 
   return {
     send, run, stop, togglePause, flushQueue, continueGeneration, regenerate,
-    executeTool, cancelActive, MAX_STEPS,
+    executeTool, cancelActive, contextUsage, MAX_STEPS,
     get active() { return active; },
   };
 })();

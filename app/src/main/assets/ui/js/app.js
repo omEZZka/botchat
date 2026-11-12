@@ -245,12 +245,15 @@ const Actions = (() => {
   };
 
   const compactSession = async () => {
-    Render.toast('Сжатие сессии запрошено');
     const chat = Store.getChat(S.chatId);
     if (!chat) return;
     const res = await Native.api('chat.compact', { chatId: chat.id });
     if (res && res.ok) {
+      S.compactKeep = res.keep || 12;
       await Store.touchChat(chat.id, { preview: 'Контекст сжат' });
+      Render.toast('Контекст сжат: модель получает последние ' + (res.keep || 12) + ' сообщений');
+    } else {
+      Render.toast('Не удалось сжать сессию');
     }
   };
 

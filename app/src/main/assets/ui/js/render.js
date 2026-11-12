@@ -449,6 +449,16 @@ const Render = (() => {
         iconButton('stop', t('chat.stop'), () => Agent.stop()),
       ]),
     ]));
+    if (agent.contextWarning) {
+      bar.appendChild(U.el('div', { class: 'context-warning ' + (agent.contextLevel || '') }, [
+        Icons.make('warn', 14),
+        U.el('span', { text: agent.contextWarning }),
+        U.el('button', {
+          class: 'link-btn', text: 'Сжать',
+          onclick: () => Actions.compactSession(),
+        }),
+      ]));
+    }
     const todos = agent.todos || [];
     if (todos.length) {
       const panel = U.el('details', { class: 'todo-panel' }, [

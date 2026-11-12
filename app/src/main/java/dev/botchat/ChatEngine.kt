@@ -55,9 +55,27 @@ object ChatEngine {
         return JSONObject().put("ok", true)
     }
 
+    /**
+     * Сжатие сессии: помечаем чат и сохраняем метку в папке чата.
+     * UI после этого сокращает окно истории, отправляемое модели.
+     */
     fun compact(context: Context, chatId: String): JSONObject {
-        // Сжатие сессии выполняется на следующем шаге: контекст обрезается до последних сообщений.
-        return JSONObject().put("ok", true).put("chatId", chatId)
+        return runCatching {
+            val file = java.io.File(Tools.chatRoot(context, chatId), "compact.json")
+            val payload = JSONObject()
+                .put("ts", System.currentTimeMillis())
+                .put("keep", 12)
+            val tmp = java.io.File(file.parentFile, ".compact.json.tmp")
+            tmp.writeText(payload.toString())
+            if (!tmp.renameTo(file)) {
+                tmp.copyTo(file, overwrite = true)
+                tmp.delete()
+            }
+            Steps.append(context, chatId, Steps.event("session.compact").put("keep", 12))
+            JSONObject().put("ok", true).put("keep", 12)
+        }.getOrElse {
+            JSONObject().put("ok", false).put("error", it.message ?: "compact failed")
+        }
     }
 
     private fun execute(

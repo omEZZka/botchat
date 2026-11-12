@@ -189,6 +189,14 @@ const Pickers = (() => {
         onclick: () => exportChat('json'),
       }),
       U.el('button', {
+        class: 'btn full', text: 'Отчёт агента (Markdown)',
+        onclick: () => exportReport('md'),
+      }),
+      U.el('button', {
+        class: 'btn full', text: 'Отчёт агента (JSON)',
+        onclick: () => exportReport('json'),
+      }),
+      U.el('button', {
         class: 'btn full', text: 'Экспорт настроек (без ключей)',
         onclick: () => exportData('settings'),
       }),
@@ -275,6 +283,49 @@ const Pickers = (() => {
       const res = await Native.call('export.text', { name: chat.title + '.json', text });
       Render.toast(res && res.ok ? 'Файл сохранён' : 'Не удалось сохранить');
     }
+    Render.closeSheet();
+  };
+
+  const exportReport = async (format) => {
+    const chat = Store.getChat(S.chatId);
+    if (!chat) return;
+    const res = await Native.api('agent.report', { chatId: chat.id });
+    if (!res || !res.ok) {
+      Render.toast('Отчёт недоступен');
+      return;
+    }
+    const report = res.report || {};
+    let text;
+    if (format === 'md') {
+      const lines = ['# Отчёт агента: ' + chat.title, '', 'Событий: ' + (report.steps || 0), ''];
+      (report.events || []).forEach((event) => {
+        const ts = new Date(event.ts).toLocaleString('ru-RU');
+        if (event.type === 'tool') {
+          lines.push('## [' + ts + '] Шаг ' + (event.step || '') + ': ' + (event.name || ''));
+          lines.push('');
+          lines.push('```json');
+          lines.push(JSON.stringify(event.input || {}, null, 2));
+          lines.push('```');
+          if (event.output) {
+            lines.push('');
+            lines.push('```');
+            lines.push(String(event.output).slice(0, 2000));
+            lines.push('```');
+          }
+          lines.push('');
+        } else {
+          lines.push('- [' + ts + '] ' + event.type + ' ' + (event.reason || event.label || ''));
+        }
+      });
+      text = lines.join('\n');
+    } else {
+      text = JSON.stringify(report, null, 2);
+    }
+    const saved = await Native.call('export.text', {
+      name: chat.title + '-report.' + format,
+      text,
+    });
+    Render.toast(saved && saved.ok ? 'Отчёт сохранён' : 'Не удалось сохранить отчёт');
     Render.closeSheet();
   };
 

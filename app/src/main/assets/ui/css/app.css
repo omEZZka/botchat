@@ -1204,3 +1204,23 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
 .profile-row-badge { font-size: 11.5px; color: var(--acc); font-weight: 600; }
 .profile-add { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
 .profile-add .field { flex: 1; }
+
+/* ---------- предупреждение о контексте ---------- */
+
+.context-warning {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 5px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(240, 180, 41, 0.14);
+  color: #f2d08a;
+  font-size: 12.5px;
+}
+.context-warning.critical {
+  background: rgba(239, 91, 91, 0.16);
+  color: #f0a0a0;
+}
+.context-warning .icon { flex: 0 0 auto; }
+.context-warning span { flex: 1; min-width: 0; }
