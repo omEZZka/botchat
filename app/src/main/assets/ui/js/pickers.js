@@ -51,7 +51,7 @@ const Pickers = (() => {
         onclick: () => { Render.closeSheet(); openCheckpoints(chat); },
       }),
     ]);
-    Render.openSheet({ title: 'Настройки чата', content });
+    Render.openSheet({ title: t('chat.settings', 'Настройки чата'), content });
   };
 
   const openCheckpoints = async (chat) => {
@@ -160,7 +160,7 @@ const Pickers = (() => {
       onclick: () => { Render.closeSheet(); exportSheet(); },
     }));
 
-    Render.openSheet({ title: 'Настройки приложения', content });
+    Render.openSheet({ title: t('settings.title'), content });
   };
 
   const numberRow = (label, value, onChange) => {
@@ -214,7 +214,7 @@ const Pickers = (() => {
       }),
       U.el('p', { class: 'muted small', text: 'Ключи API никогда не попадают в экспорт и бэкап.' }),
     ]);
-    Render.openSheet({ title: 'Экспорт и бэкап', content });
+    Render.openSheet({ title: t('settings.backup'), content });
   };
 
   const profilesSheet = async () => {
@@ -268,7 +268,7 @@ const Pickers = (() => {
         },
       }),
     ]));
-    Render.openSheet({ title: 'Профили', content });
+    Render.openSheet({ title: t('settings.profiles'), content });
   };
 
   const exportChat = async (format) => {
@@ -462,7 +462,7 @@ const Pickers = (() => {
         U.el('span', { class: 'muted small', text: U.truncate(task.description || '', 60) }),
       ]));
     });
-    Render.openSheet({ title: 'Граф задач', content });
+    Render.openSheet({ title: t('agent.graph'), content });
   };
 
   return {
