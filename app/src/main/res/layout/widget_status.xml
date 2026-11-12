@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="#1A1F27"
+    android:padding="12dp">
+
+    <View
+        android:id="@+id/widget_dot"
+        android:layout_width="10dp"
+        android:layout_height="10dp"
+        android:background="#6B7280" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:layout_marginStart="10dp">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#E7EBF0"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:text="botCHAT" />
+
+        <TextView
+            android:id="@+id/widget_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#9AA4B2"
+            android:textSize="12sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="Агент простаивает" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_stop"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:padding="6dp"
+        android:textColor="#9AA4B2"
+        android:textSize="12sp"
+        android:text="Стоп" />
+</LinearLayout>

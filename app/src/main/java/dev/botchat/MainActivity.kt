@@ -1,0 +1,362 @@
+package dev.botchat
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.OpenableColumns
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Toast
+import android.app.Activity
+import androidx.core.content.ContextCompat
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+
+class MainActivity : Activity(), BridgeHost {
+
+    private lateinit var web: WebView
+    private var pendingPick: ((List<Uri>) -> Unit)? = null
+    private var receiver: BroadcastReceiver? = null
+
+    private val REQ_FILES = 1001
+    private val REQ_IMAGE = 1002
+    private val REQ_NOTIFY = 1003
+
+    @SuppressLint("SetJavaScriptEnabled")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+        }
+        current = this
+        Runtime.ensureDirs(this)
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+        web = WebView(this)
+        web.setBackgroundColor(0xFF0F1216.toInt())
+        web.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+            allowFileAccess = false
+            allowContentAccess = false
+            mediaPlaybackRequiresUserGesture = true
+            cacheMode = WebSettings.LOAD_DEFAULT
+            useWideViewPort = true
+            loadWithOverviewMode = true
+            textZoom = 100
+            setSupportZoom(false)
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            web.settings.forceDark = WebSettings.FORCE_DARK_ON
+        }
+        web.addJavascriptInterface(Bridge(), "BCBridge")
+        web.webChromeClient = WebChromeClient()
+        web.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                val url = request.url
+                if (url.host == "appassets.androidplatform.net") {
+                    val path = url.path?.removePrefix("/")?.ifBlank { "index.html" } ?: "index.html"
+                    return assetResponse(path)
+                }
+                return null
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val url = request.url
+                if (url.host == "appassets.androidplatform.net") return false
+                if (url.scheme == "https" || url.scheme == "http") {
+                    startActivity(Intent(Intent.ACTION_VIEW, url))
+                }
+                return true
+            }
+        }
+        setContentView(web)
+        web.loadUrl("https://appassets.androidplatform.net/index.html")
+        registerEvents()
+        handleIntent(intent)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK) {
+            pendingPick = null
+            return
+        }
+        if (requestCode != REQ_FILES && requestCode != REQ_IMAGE) return
+        val uris = ArrayList<Uri>()
+        val clip = data?.clipData
+        if (clip != null) {
+            for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
+        } else if (data?.data != null) {
+            uris.add(data.data!!)
+        }
+        pendingPick?.invoke(uris)
+        pendingPick = null
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun registerEvents() {
+        val filter = IntentFilter(Notifier.EVENT)
+        receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val name = intent.getStringExtra("event") ?: return
+                val raw = intent.getStringExtra("payload") ?: "{}"
+                val payload = runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+                emit(name, payload)
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(receiver, filter)
+        }
+    }
+
+    private fun assetResponse(path: String): WebResourceResponse? {
+        val clean = path.substringBefore('?').trimStart('/').ifBlank { "index.html" }
+        return try {
+            val stream = assets.open("ui/$clean")
+            val mime = when {
+                clean.endsWith(".js") -> "application/javascript"
+                clean.endsWith(".css") -> "text/css"
+                clean.endsWith(".html") -> "text/html"
+                clean.endsWith(".json") -> "application/json"
+                clean.endsWith(".svg") -> "image/svg+xml"
+                clean.endsWith(".png") -> "image/png"
+                else -> "application/octet-stream"
+            }
+            WebResourceResponse(mime, "utf-8", stream)
+        } catch (_: Exception) {
+            WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), null)
+        }
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        val chatId = intent?.getStringExtra("chat_id") ?: return
+        val action = intent.getStringExtra("action") ?: "open"
+        runCatching {
+            web.evaluateJavascript(
+                "window.BCNative && window.BCNative.onIntent(${JSONObject.quote(action)}, ${JSONObject.quote(chatId)})",
+                null
+            )
+        }
+    }
+
+    override fun emit(event: String, payload: JSONObject) {
+        val js = "window.BCEmit && window.BCEmit(${JSONObject.quote(event)}, $payload);"
+        runOnUiThread {
+            if (::web.isInitialized) web.evaluateJavascript(js, null)
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!::web.isInitialized) {
+            super.onBackPressed()
+            return
+        }
+        web.evaluateJavascript("(window.BCNative && window.BCNative.onBack && window.BCNative.onBack())") { handled ->
+            if (handled != "true") {
+                runOnUiThread { finish() }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        receiver?.let { runCatching { unregisterReceiver(it) } }
+        receiver = null
+        current = null
+        if (::web.isInitialized) web.destroy()
+        super.onDestroy()
+    }
+
+    inner class Bridge {
+
+        @JavascriptInterface
+        fun call(method: String, arg: String): String {
+            return try {
+                val payload = if (arg.isBlank()) JSONObject() else JSONObject(arg)
+                when (method) {
+                    "state" -> {
+                        AppState.publish(payload.toString())
+                        runOnUiThread { TileService.requestRefresh(this@MainActivity) }
+                        ok()
+                    }
+                    "fs" -> Fs.info(payload.optString("path"), payload.optString("chatId"))
+                    "ls" -> Fs.list(payload.optString("path"), payload.optString("chatId"))
+                    "readText" -> Fs.readText(
+                        payload.optString("path"),
+                        payload.optInt("maxBytes", 512 * 1024),
+                        payload.optString("chatId")
+                    )
+                    "writeText" -> Fs.writeText(
+                        payload.optString("path"),
+                        payload.optString("text"),
+                        payload.optString("chatId")
+                    )
+                    "mkdir" -> Fs.mkdir(payload.optString("path"), payload.optString("chatId"))
+                    "delete" -> Fs.delete(payload.optString("path"), payload.optString("chatId"))
+                    "copy" -> clip(payload.optString("text"))
+                    "share" -> share(payload.optString("text"), payload.optString("title"))
+                    "openLink" -> openLink(payload.optString("url"))
+                    "notify" -> Notifier.post(this@MainActivity, payload)
+                    "toast" -> toast(payload.optString("text"))
+                    "pick" -> pick(payload.optString("kind"))
+                    "env" -> env()
+                    "export.text" -> exportText(payload.optString("name"), payload.optString("text"))
+                    "api" -> Api.dispatch(this@MainActivity, payload)
+                    "tool" -> Tools.run(
+                        this@MainActivity,
+                        payload.optString("chatId"),
+                        payload.optString("name"),
+                        payload.optJSONObject("args") ?: JSONObject()
+                    )
+                    else -> err("unknown method: $method")
+                }.toString()
+            } catch (t: Throwable) {
+                err(t.message ?: t.javaClass.simpleName).toString()
+            }
+        }
+
+        private fun toast(text: String): JSONObject {
+            runOnUiThread { Toast.makeText(this@MainActivity, text, Toast.LENGTH_SHORT).show() }
+            return ok()
+        }
+
+        private fun clip(text: String): JSONObject {
+            val cm = getSystemService(ClipboardManager::class.java)
+            cm.setPrimaryClip(ClipData.newPlainText("botCHAT", text))
+            return ok()
+        }
+
+        private fun share(text: String, title: String): JSONObject {
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+                putExtra(Intent.EXTRA_TITLE, title)
+            }
+            startActivity(Intent.createChooser(send, title))
+            return ok()
+        }
+
+        private fun openLink(url: String): JSONObject {
+            if (!url.startsWith("https://") && !url.startsWith("http://")) return err("scheme")
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            return ok()
+        }
+
+        private fun exportText(name: String, text: String): JSONObject {
+            val safe = name.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "export.txt" }
+            val dir = File(getExternalFilesDir(null), "exports").apply { mkdirs() }
+            val file = File(dir, safe)
+            val tmp = File(dir, ".$safe.tmp")
+            tmp.writeText(text)
+            if (!tmp.renameTo(file)) {
+                tmp.copyTo(file, overwrite = true)
+                tmp.delete()
+            }
+            return ok().put("path", file.absolutePath).put("uri", Uri.fromFile(file).toString())
+        }
+
+        private fun pick(kind: String): JSONObject {
+            pendingPick = { uris -> emitPicked(uris) }
+            runOnUiThread {
+                val intent = Intent(if (kind == "image") Intent.ACTION_GET_CONTENT else Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = if (kind == "image") "image/*" else "*/*"
+                    if (kind != "image") putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                }
+                startActivityForResult(intent, if (kind == "image") REQ_IMAGE else REQ_FILES)
+            }
+            return ok()
+        }
+
+        private fun emitPicked(uris: List<Uri>) {
+            val arr = JSONArray()
+            uris.forEach { uri ->
+                val name = queryName(uri)
+                val size = querySize(uri)
+                val stored = runCatching { Fs.importAttachment(uri, name) }.getOrNull()
+                arr.put(
+                    JSONObject()
+                        .put("name", name)
+                        .put("size", size)
+                        .put("mime", contentResolver.getType(uri) ?: "application/octet-stream")
+                        .put("path", stored?.absolutePath ?: "")
+                )
+            }
+            emit("picked", JSONObject().put("items", arr))
+        }
+
+        private fun queryName(uri: Uri): String {
+            contentResolver.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0 && !c.isNull(idx)) return c.getString(idx)
+                }
+            }
+            return uri.lastPathSegment ?: "file"
+        }
+
+        private fun querySize(uri: Uri): Long {
+            contentResolver.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val idx = c.getColumnIndex(OpenableColumns.SIZE)
+                    if (idx >= 0 && !c.isNull(idx)) return c.getLong(idx)
+                }
+            }
+            return 0
+        }
+
+        private fun env(): JSONObject {
+            val p = packageManager.getPackageInfo(packageName, 0)
+            val runtime = Runtime.envInfo(this@MainActivity)
+            return ok()
+                .put("versionName", p.versionName ?: "0")
+                .put("versionCode", if (Build.VERSION.SDK_INT >= 28) p.longVersionCode else p.versionCode.toLong())
+                .put("sdk", Build.VERSION.SDK_INT)
+                .put("abi", Build.SUPPORTED_ABIS.joinToString(","))
+                .put("rootfs", runtime.optBoolean("rootfs"))
+                .put("bash", runtime.optBoolean("bash"))
+                .put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+        }
+    }
+
+    companion object {
+        @Volatile
+        private var current: MainActivity? = null
+
+        fun host(): BridgeHost? = current
+
+        fun ok(): JSONObject = JSONObject().put("ok", true)
+        fun err(message: String): JSONObject = JSONObject().put("ok", false).put("error", message)
+    }
+}
+
+interface BridgeHost {
+    fun emit(event: String, payload: JSONObject)
+}

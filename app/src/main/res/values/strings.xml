@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">botCHAT</string>
+    <string name="tile_label">botCHAT агент</string>
+    <string name="widget_label">botCHAT статус</string>
+    <string name="channel_agent">Агент</string>
+    <string name="channel_errors">Ошибки</string>
+</resources>

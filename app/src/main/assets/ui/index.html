@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark" data-accent="blue">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>botCHAT</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+  <main id="view" class="view"></main>
+  <nav id="tabbar" class="tabbar"></nav>
+</div>
+<div id="sheet-host" class="sheet-host"></div>
+<div id="toast-host" class="toast-host" aria-live="polite"></div>
+<div id="boot" class="boot"><div class="boot-mark"></div></div>
+
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/hljs.min.js"></script>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+
+<script src="js/util.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/native.js"></script>
+<script src="js/store.js"></script>
+<script src="js/render.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/agent.js"></script>
+<script src="js/files.js"></script>
+<script src="js/pickers.js"></script>
+<script src="js/providers.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/app.js"></script>
+<script src="js/boot.js"></script>
+<script>
+  (function () {
+    const boot = document.getElementById('boot');
+    Boot.start().catch(function (err) {
+      console.error(err);
+      boot.classList.add('failed');
+      boot.textContent = 'Ошибка запуска: ' + (err && err.message ? err.message : err);
+    }).then(function () {
+      boot.classList.add('done');
+      setTimeout(function () { boot.remove(); }, 200);
+    });
+  })();
+</script>
+</body>
+</html>
