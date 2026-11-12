@@ -43,9 +43,9 @@ class TileService : TileService() {
     }
 
     private fun render() {
-        val state = runCatching { JSONObject(AppState.raw()) }.getOrDefault(JSONObject())
-        val running = state.optBoolean("agentRunning")
-        val pending = state.optBoolean("pendingPermission")
+        val snapshot = runCatching { JSONObject(AppState.raw()) }.getOrDefault(JSONObject())
+        val running = snapshot.optBoolean("agentRunning")
+        val pending = snapshot.optBoolean("pendingPermission")
         qsTile?.apply {
             state = if (running) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
             label = when {
@@ -54,7 +54,7 @@ class TileService : TileService() {
                 else -> getString(R.string.tile_label)
             }
             if (Build.VERSION.SDK_INT >= 29) {
-                subtitle = if (running) "шаг ${state.optInt("step", 0)}" else "простой"
+                subtitle = if (running) "шаг ${snapshot.optInt("step", 0)}" else "простой"
             }
             icon = Icon.createWithResource(this@TileService, R.drawable.ic_tile)
             updateTile()

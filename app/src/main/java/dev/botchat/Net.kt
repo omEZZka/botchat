@@ -77,7 +77,11 @@ object Net {
                     val text = res.body?.string() ?: ""
                     if (!res.isSuccessful) {
                         return Result.failure(
-                            NetException(res.code, friendly(res.code, text), res.code)
+                            NetException(
+                                res.code,
+                                friendly(res.code, text),
+                                res.code == 429 || res.code >= 500
+                            )
                         )
                     }
                     return Result.success(if (text.isBlank()) JSONObject() else JSONObject(text))

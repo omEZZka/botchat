@@ -31,5 +31,5 @@ object Agent {
     fun status(): JSONObject = JSONObject()
         .put("ok", true)
         .put("sessions", sessions.keys.toList())
-        .put("service", AgentService.isRunning)
+        .put("service", AgentService.running)
 }

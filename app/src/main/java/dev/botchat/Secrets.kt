@@ -197,12 +197,19 @@ object Secrets {
         return key.take(3) + "…" + key.takeLast(4)
     }
 
-    fun wipe(context: Context) {
-        prefs(context).edit().remove("vault").apply()
-        runCatching {
-            val ks = KeyStore.getInstance(KEY_STORE).apply { load(null) }
-            ks.deleteEntry(ALIAS)
+    @Synchronized
+    fun wipe(context: Context, providerId: String = "") {
+        if (providerId.isBlank()) {
+            prefs(context).edit().remove("vault").apply()
+            runCatching {
+                val ks = KeyStore.getInstance(KEY_STORE).apply { load(null) }
+                ks.deleteEntry(ALIAS)
+            }
+            return
         }
+        val vault = load(context)
+        vault.remove(providerId)
+        save(context, vault)
     }
 
     private fun err(message: String) = JSONObject().put("ok", false).put("error", message)

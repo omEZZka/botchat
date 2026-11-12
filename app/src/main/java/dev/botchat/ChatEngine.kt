@@ -275,9 +275,12 @@ object ChatEngine {
     }
 
     private fun parseArgs(raw: String): JSONObject {
-        if (raw.isBlank()) return JSONObject()
-        return runCatching { JSONObject(raw) }.getOrElse {
-            runCatching { JSONObject("{}") }.get()
+        val text = raw.trim()
+        if (text.isEmpty()) return JSONObject()
+        return try {
+            JSONObject(text)
+        } catch (_: Exception) {
+            JSONObject()
         }
     }
 

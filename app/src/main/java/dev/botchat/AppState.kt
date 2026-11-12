@@ -23,7 +23,7 @@ object AppState {
         return base
             .put("ok", true)
             .put("rootfs", Runtime.rootfsReady())
-            .put("agentService", AgentService.isRunning)
+            .put("agentService", AgentService.running)
             .put("ts", System.currentTimeMillis())
     }
 }
