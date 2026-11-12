@@ -310,6 +310,10 @@ const ProvidersUI = (() => {
         class: 'btn small', text: 'Провайдеры',
         onclick: () => { Render.closeSheet(); openProvidersScreen(); },
       }),
+      U.el('button', {
+        class: 'btn small', text: 'Резерв',
+        onclick: () => { Render.closeSheet(); openFallback(); },
+      }),
       U.el('button', { class: 'btn small', text: 'Обновить', onclick: () => refreshModels(search.value) }),
     ]));
     const refreshModels = async (query) => {
@@ -325,6 +329,82 @@ const ProvidersUI = (() => {
     renderList('');
     Render.openSheet({ title: 'Модель', content });
     if (!(S.models || []).length) refreshModels('');
+  };
+
+  const openFallback = () => {
+    const content = U.el('div', { class: 'profiles' });
+    const list = U.el('div', { class: 'fallback-list' });
+    const chain = () => (S.settings.fallbackChain || []).slice();
+
+    const renderChain = () => {
+      U.clear(list);
+      const items = chain();
+      if (!items.length) {
+        list.appendChild(U.el('p', { class: 'muted small', text: 'Резервные модели не заданы. При ошибке или квоте диалог прервётся.' }));
+      }
+      items.forEach((key, index) => {
+        const idx = key.indexOf('|');
+        const providerId = idx < 0 ? key : key.slice(0, idx);
+        const modelId = idx < 0 ? '' : key.slice(idx + 1);
+        const provider = S.providers.find((p) => p.id === providerId);
+        list.appendChild(U.el('div', { class: 'fallback-row' }, [
+          U.el('span', { class: 'fallback-index', text: String(index + 1) }),
+          U.el('span', { class: 'fallback-name', text: (provider ? provider.name : providerId) + ' · ' + modelId }),
+          U.el('button', {
+            class: 'link-btn', text: 'выше',
+            disabled: index === 0,
+            onclick: () => {
+              const next = chain();
+              const [item] = next.splice(index, 1);
+              next.splice(index - 1, 0, item);
+              Store.setSetting('fallbackChain', next);
+              renderChain();
+            },
+          }),
+          U.el('button', {
+            class: 'link-btn danger', text: 'убрать',
+            onclick: () => {
+              const next = chain();
+              next.splice(index, 1);
+              Store.setSetting('fallbackChain', next);
+              renderChain();
+            },
+          }),
+        ]));
+      });
+    };
+
+    const select = U.el('select', { class: 'field' }, [
+      U.el('option', { value: '', text: 'выберите модель' }),
+      ...(S.models || []).map((m) => U.el('option', {
+        value: (m.provider || '') + '|' + m.id,
+        text: (m.provider ? m.provider + ' · ' : '') + (m.name || m.id),
+      })),
+    ]);
+
+    content.appendChild(U.el('p', { class: 'muted small', text: 'Порядок важен: при ошибке или квоте сначала пробуется следующий ключ текущего провайдера, затем модели из этой цепочки сверху вниз.' }));
+    content.appendChild(list);
+    content.appendChild(U.el('div', { class: 'fallback-add' }, [
+      select,
+      U.el('button', {
+        class: 'btn small', text: 'Добавить',
+        onclick: () => {
+          const value = select.value;
+          if (!value) return;
+          const next = chain();
+          if (next.includes(value)) {
+            Render.toast('Уже в цепочке');
+            return;
+          }
+          next.push(value);
+          Store.setSetting('fallbackChain', next);
+          select.value = '';
+          renderChain();
+        },
+      }),
+    ]));
+    renderChain();
+    Render.openSheet({ title: 'Резервные модели', content });
   };
 
   const openProfiles = () => {
@@ -358,7 +438,10 @@ const ProvidersUI = (() => {
   };
 
   void state;
-  return { load, openProvidersScreen, openModelSheet, openAddProvider, openProfiles, providerCard };
+  return {
+    load, openProvidersScreen, openModelSheet, openAddProvider, openProfiles,
+    openFallback, providerCard,
+  };
 })();
 
 window.ProvidersUI = ProvidersUI;

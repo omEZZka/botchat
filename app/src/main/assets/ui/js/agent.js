@@ -122,6 +122,25 @@ const Agent = (() => {
     }
   };
 
+  const buildFallback = (providerId, modelId) => {
+    const chain = (S.settings.fallbackChain || [])
+      .map((key) => {
+        const idx = key.indexOf('|');
+        if (idx < 0) return null;
+        return { provider: key.slice(0, idx), id: key.slice(idx + 1) };
+      })
+      .filter(Boolean);
+    for (const profile of ['fast', 'quality', 'cheap']) {
+      const value = (S.settings.modelProfiles || {})[profile];
+      if (!value) continue;
+      const idx = value.indexOf('|');
+      if (idx < 0) continue;
+      const item = { provider: value.slice(0, idx), id: value.slice(idx + 1) };
+      if (!chain.some((c) => c.provider === item.provider && c.id === item.id)) chain.push(item);
+    }
+    return chain.filter((c) => !(c.provider === providerId && c.id === modelId));
+  };
+
   const lastAssistantText = (chatId) => {
     const list = Store.messages(chatId);
     for (let i = list.length - 1; i >= 0; i -= 1) {
@@ -261,6 +280,7 @@ const Agent = (() => {
     const providerId = chat.provider || S.settings.activeProvider;
     const modelId = chat.model || S.settings.activeModel;
     const requestId = U.uid('req');
+    const fallback = buildFallback(providerId, modelId);
     let buffer = '';
     let toolCalls = [];
     let finished = false;
@@ -300,6 +320,7 @@ const Agent = (() => {
       planOnly: !!options.planOnly,
       maxSteps: active ? active.limit : 1,
       step: options.toolStep || 0,
+      fallbackModels: fallback,
     });
     if (!res || !res.ok) {
       offDelta(); offTool(); offDone(); offError();

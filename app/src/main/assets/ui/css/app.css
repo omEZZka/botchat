@@ -1161,3 +1161,29 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
 }
 .pending-actions { display: flex; gap: 6px; }
 .pending-actions .btn { flex: 1; }
+
+/* ---------- резервные модели ---------- */
+
+.fallback-list { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.fallback-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.fallback-index {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--acc-soft);
+  color: var(--acc);
+  font-size: 11px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+.fallback-name { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fallback-add { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.fallback-add .field { flex: 1; }
