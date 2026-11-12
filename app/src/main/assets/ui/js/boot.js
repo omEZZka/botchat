@@ -45,6 +45,7 @@ const Boot = (() => {
 
     await ProvidersUI.load();
     await Store.load();
+    await restoreAgentState();
     Bus.emit('queue:flush');
 
     Render.bind();
@@ -77,7 +78,27 @@ const Boot = (() => {
     S.booted = true;
   };
 
-  return { start };
+  const restoreAgentState = async () => {
+    if (!S.chatId) return;
+    const res = await Native.api('agent.state', { chatId: S.chatId });
+    if (!res || !res.ok) return;
+    if (res.phase && res.phase !== 'idle' && res.phase !== 'done') {
+      Store.setAgent({
+        running: true,
+        chatId: S.chatId,
+        step: res.step || 0,
+        total: res.limit || S.settings.stepLimit,
+        label: 'Восстановлено: ' + (res.label || 'шаг'),
+        paused: !!res.paused,
+      });
+    }
+    const report = await Native.api('agent.report', { chatId: S.chatId });
+    if (report && report.ok && report.report) {
+      S.agent.report = report.report;
+    }
+  };
+
+  return { start, restoreAgentState };
 })();
 
 /**

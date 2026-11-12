@@ -103,6 +103,15 @@ const Agent = (() => {
     } catch (err) {
       await fail(chatId, assistantMsg, err);
     } finally {
+      const finishedChat = Store.getChat(chatId);
+      if (S.settings.notifications) {
+        Native.notify({
+          chatId,
+          title: finishedChat ? finishedChat.title : 'botCHAT',
+          text: lastAssistantText(chatId) || 'Агент завершил работу',
+          running: false,
+        });
+      }
       active = null;
       paused = false;
       Store.setAgent({ running: false, phase: 'idle', label: '', paused: false });
@@ -111,6 +120,16 @@ const Agent = (() => {
       AgentServiceKeepAlive(false, chatId);
       Bus.emit('render');
     }
+  };
+
+  const lastAssistantText = (chatId) => {
+    const list = Store.messages(chatId);
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i].role === 'assistant' && (list[i].text || '').trim()) {
+        return U.truncate(list[i].text.replace(/\s+/g, ' ').trim(), 140);
+      }
+    }
+    return '';
   };
 
   const AgentServiceKeepAlive = (on, chatId) => {

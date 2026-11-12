@@ -47,6 +47,42 @@ class Notifier : BroadcastReceiver() {
             context.sendBroadcast(i)
         }
 
+        /**
+         * Статус агента в одном уведомлении: обновляется на месте, не копится.
+         */
+        fun progress(context: Context, chatId: String, title: String, text: String, step: Int, total: Int): JSONObject {
+            val open = PendingIntent.getBroadcast(
+                context, notifyId(chatId) * 10 + 1,
+                Intent(context, Notifier::class.java).apply {
+                    action = ACTION_OPEN
+                    putExtra("chat_id", chatId)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val stop = PendingIntent.getBroadcast(
+                context, notifyId(chatId) * 10 + 2,
+                Intent(context, Notifier::class.java).apply {
+                    action = ACTION_STOP
+                    putExtra("chat_id", chatId)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val builder = NotificationCompat.Builder(context, App.CH_AGENT)
+                .setSmallIcon(R.drawable.ic_tile)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .setContentIntent(open)
+                .addAction(0, context.getString(android.R.string.cancel), stop)
+            if (total > 0) {
+                builder.setProgress(total, step, false)
+            }
+            NotificationManagerCompatHolder.notify(context, notifyId(chatId), builder.build())
+            return JSONObject().put("ok", true)
+        }
+
         fun post(context: Context, payload: JSONObject): JSONObject {
             val chatId = payload.optString("chatId", "chat")
             val title = payload.optString("title", "botCHAT")

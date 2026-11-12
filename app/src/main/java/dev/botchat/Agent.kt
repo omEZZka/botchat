@@ -50,6 +50,7 @@ object Agent {
         session.updatedAt = session.startedAt
         Steps.append(context, chatId, Steps.event("run.begin").put("limit", session.limit))
         persist(context, session)
+        AgentService.publishStatus(chatId, 0, session.limit, "план")
         return stateOf(session)
     }
 
@@ -70,6 +71,7 @@ object Agent {
                 .put("status", status)
         )
         persist(context, session)
+        AgentService.publishStatus(chatId, index, session.limit, name)
         return stateOf(session)
     }
 

@@ -44,6 +44,18 @@ class AgentService : Service() {
         super.onDestroy()
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Процесс могут убить в фоне: сохраняем, что задача жива, и просим UI восстановиться.
+        runCatching {
+            Notifier.emitToUi(
+                this,
+                "agent.status",
+                JSONObject().put("restored", true).put("service", true)
+            )
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
     private fun buildNotification(): Notification {
         val open = android.app.PendingIntent.getBroadcast(
             this, 1,
@@ -92,6 +104,17 @@ class AgentService : Service() {
                     App.instance, "agent.status",
                     JSONObject().put("chatId", chatId).put("step", step).put("total", total).put("text", text)
                 )
+                if (running && chatId.isNotBlank()) {
+                    val state = runCatching { JSONObject(AppState.raw()) }.getOrDefault(JSONObject())
+                    Notifier.progress(
+                        App.instance,
+                        chatId,
+                        state.optString("title", "botCHAT"),
+                        text,
+                        step,
+                        total
+                    )
+                }
             }
         }
     }
