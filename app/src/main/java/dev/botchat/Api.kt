@@ -41,7 +41,16 @@ object Api {
                 JSONObject().put("ok", true)
             }
             "models.refresh" -> Models.refresh(context)
-            "chat.start" -> ChatEngine.start(context, payload)
+            "chat.start" -> {
+                val chatId = payload.optString("chatId")
+                val step = payload.optInt("step", 0)
+                if (step <= 1) Agent.begin(context, chatId, payload.optInt("maxSteps", 30))
+                ChatEngine.start(context, payload)
+            }
+            "agent.state" -> Agent.restore(context, payload.optString("chatId"))
+            "agent.report" -> Steps.report(context, payload.optString("chatId"))
+            "agent.pause" -> Agent.pause(payload.optString("chatId"))
+            "agent.resume" -> Agent.resume(context, payload.optString("chatId"))
             "chat.cancel" -> ChatEngine.cancel(payload.optString("chatId"))
             "chat.compact" -> ChatEngine.compact(context, payload.optString("chatId"))
             "agent.start" -> {

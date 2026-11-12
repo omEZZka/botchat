@@ -164,12 +164,16 @@ const Agent = (() => {
   const togglePause = () => {
     if (!active) return;
     paused = !paused;
+    Native.api(paused ? 'agent.pause' : 'agent.resume', { chatId: active.chatId });
     if (!paused && pauseWaiter) pauseWaiter();
     Store.setAgent({ paused });
   };
 
   const stop = () => {
-    if (active) active.cancelled = true;
+    if (active) {
+      active.cancelled = true;
+      Native.api('agent.stop', { chatId: active.chatId });
+    }
     if (pauseWaiter) pauseWaiter();
     Native.api('chat.cancel', { chatId: S.chatId });
     Store.setAgent({ running: false, phase: 'idle', label: '' });
