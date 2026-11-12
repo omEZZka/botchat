@@ -390,7 +390,7 @@ const Render = (() => {
         iconButton('more', 'Ещё', () => Actions.openChatMenu()),
       ]));
       chatViewEl.appendChild(header);
-      chatViewEl.appendChild(U.el('div', { class: 'agent-progress', id: 'agent-progress', hidden: 'hidden' }));
+      chatViewEl.appendChild(U.el('div', { class: 'agent-progress', id: 'agent-progress', hidden: 'hidden', role: 'status', 'aria-live': 'polite' }));
       chatListEl = U.el('div', { class: 'messages', id: 'messages', role: 'log', 'aria-live': 'polite' });
       chatViewEl.appendChild(chatListEl);
       const down = U.el('button', {
@@ -545,6 +545,9 @@ const Render = (() => {
     const keepScroll = chatListEl.scrollTop + chatListEl.clientHeight >= chatListEl.scrollHeight - 80;
     U.clear(chatListEl);
     const visible = list.slice(-windowSize);
+    if (list.length > windowSize) {
+      chatListEl.dataset.windowed = '1';
+    }
     let lastDay = '';
     let lastRole = '';
     visible.forEach((msg, i) => {
