@@ -17,7 +17,7 @@ const Composer = (() => {
 
     textarea = U.el('textarea', {
       class: 'composer-input', id: 'composer-input', rows: 1,
-      placeholder: 'Сообщение', 'aria-label': 'Сообщение',
+      placeholder: t('chat.placeholder'), 'aria-label': t('chat.placeholder'),
       oninput: () => {
         autoGrow();
         const chatId = S.chatId;
@@ -84,13 +84,13 @@ const Composer = (() => {
     if (running) {
       btn.appendChild(Icons.make('stop', 20));
       btn.classList.add('stop');
-      btn.setAttribute('aria-label', 'Стоп');
-      btn.title = 'Стоп';
+      btn.setAttribute('aria-label', t('chat.stop'));
+      btn.title = t('chat.stop');
     } else {
       btn.appendChild(Icons.make('send', 20));
       btn.classList.remove('stop');
-      btn.setAttribute('aria-label', 'Отправить');
-      btn.title = 'Отправить';
+      btn.setAttribute('aria-label', t('chat.send'));
+      btn.title = t('chat.send');
     }
     btn.classList.toggle('ready', hasText || attachments.length > 0 || running);
     const counters = U.$('#composer-counters');

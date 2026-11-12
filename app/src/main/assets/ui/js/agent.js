@@ -38,7 +38,7 @@ const Agent = (() => {
       });
       Store.enqueue(chatId, payload);
       await Store.touchChat(chatId, { status: 'queued' });
-      Render.toast('Нет сети: сообщение в очереди');
+      Render.toast(t('offline.queued'));
       Store.publishState();
       return;
     }

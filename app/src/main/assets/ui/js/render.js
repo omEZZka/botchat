@@ -185,9 +185,9 @@ const Render = (() => {
     if (!bar) return;
     U.clear(bar);
     const tabs = [
-      { id: 'chats', icon: 'chats', label: 'Чаты' },
-      { id: 'search', icon: 'search', label: 'Поиск' },
-      { id: 'settings', icon: 'settings', label: 'Настройки' },
+      { id: 'chats', icon: 'chats', label: t('tab.chats') },
+      { id: 'search', icon: 'search', label: t('tab.search') },
+      { id: 'settings', icon: 'settings', label: t('tab.settings') },
     ];
     tabs.forEach((tab) => {
       const active = tab.id === S.route;
@@ -229,7 +229,7 @@ const Render = (() => {
     if (!S.online) {
       list.appendChild(U.el('div', { class: 'banner warn' }, [
         Icons.make('warn', 16),
-        U.el('span', { text: 'Нет сети. История доступна, новые ответы — после подключения.' }),
+        U.el('span', { text: t('offline.banner') }),
       ]));
     }
 
@@ -256,7 +256,7 @@ const Render = (() => {
     }
 
     const fab = U.el('button', {
-      class: 'fab', type: 'button', 'aria-label': 'Новый чат',
+      class: 'fab', type: 'button', 'aria-label': t('chats.new'),
       onclick: () => Actions.newChat(),
     }, Icons.make('plus', 24));
     list.appendChild(fab);
@@ -315,9 +315,9 @@ const Render = (() => {
   };
 
   const previewLine = (chat) => {
-    if (chat.draft) return 'Черновик: ' + chat.draft;
-    if (chat.status === 'running') return 'Агент работает…';
-    return chat.preview || 'Нет сообщений';
+    if (chat.draft) return t('chats.draft') + ': ' + chat.draft;
+    if (chat.status === 'running') return t('chats.agentWorking');
+    return chat.preview || t('chats.noMessages');
   };
 
   const bindSwipeRows = (root) => {
@@ -394,7 +394,7 @@ const Render = (() => {
       chatListEl = U.el('div', { class: 'messages', id: 'messages', role: 'log', 'aria-live': 'polite' });
       chatViewEl.appendChild(chatListEl);
       const down = U.el('button', {
-        class: 'scroll-down', type: 'button', 'aria-label': 'Вниз',
+        class: 'scroll-down', type: 'button', 'aria-label': t('chat.scrollDown'),
         onclick: () => scrollToBottom(true),
       }, [Icons.make('down', 18), U.el('span', { class: 'scroll-count', id: 'scroll-count' })]);
       chatViewEl.appendChild(down);
@@ -444,9 +444,9 @@ const Render = (() => {
         text: (agent.label || 'Агент работает') + (agent.total ? ' · шаг ' + agent.step + ' из ' + agent.total : ''),
       }),
       U.el('div', { class: 'progress-actions' }, [
-        iconButton(agent.paused ? 'play' : 'pause', agent.paused ? 'Продолжить' : 'Пауза', () => Agent.togglePause()),
-        iconButton('graph', 'Граф задач', () => Actions.openTaskGraph()),
-        iconButton('stop', 'Стоп', () => Agent.stop()),
+        iconButton(agent.paused ? 'play' : 'pause', agent.paused ? t('agent.resume') : t('agent.pause'), () => Agent.togglePause()),
+        iconButton('graph', t('agent.graph'), () => Actions.openTaskGraph()),
+        iconButton('stop', t('chat.stop'), () => Agent.stop()),
       ]),
     ]));
     const todos = agent.todos || [];
@@ -482,20 +482,20 @@ const Render = (() => {
       host.appendChild(U.el('div', { class: 'pending-card' }, [
         U.el('div', { class: 'pending-head' }, [
           Icons.make('shield', 16),
-          U.el('span', { text: 'Нужно разрешение: ' + call.name }),
+          U.el('span', { text: t('agent.permission') + ': ' + call.name }),
         ]),
         detail ? U.el('pre', { class: 'pending-detail' }, [U.el('code', { text: detail })]) : null,
         U.el('div', { class: 'pending-actions' }, [
           U.el('button', {
-            class: 'btn small primary', text: 'Разрешить раз',
+            class: 'btn small primary', text: t('agent.grant'),
             onclick: () => Actions.resolvePermission('allow'),
           }),
           U.el('button', {
-            class: 'btn small', text: 'Всегда',
+            class: 'btn small', text: t('agent.always'),
             onclick: () => Actions.resolvePermission('always'),
           }),
           U.el('button', {
-            class: 'btn small danger-ghost', text: 'Отклонить',
+            class: 'btn small danger-ghost', text: t('agent.deny'),
             onclick: () => Actions.resolvePermission('deny'),
           }),
         ]),
@@ -558,7 +558,7 @@ const Render = (() => {
       chatListEl.appendChild(node);
       lastRole = msg.role;
       if (i === visible.length - 1 && msg.role === 'assistant' && msg.streaming) {
-        chatListEl.appendChild(U.el('div', { class: 'typing', id: 'typing', 'aria-label': 'Агент печатает' }, [
+        chatListEl.appendChild(U.el('div', { class: 'typing', id: 'typing', 'aria-label': t('chat.typing') }, [
           U.el('span'), U.el('span'), U.el('span'),
         ]));
       }
@@ -842,10 +842,10 @@ const Render = (() => {
     U.clear(view);
     const section = U.el('section', { class: 'screen search-screen' });
     section.appendChild(U.el('header', { class: 'topbar' }, [
-      U.el('h1', { class: 'screen-title', text: 'Поиск' }),
+      U.el('h1', { class: 'screen-title', text: t('search.title') }),
     ]));
     const input = U.el('input', {
-      class: 'search-input', type: 'search', placeholder: 'По чатам и сообщениям',
+      class: 'search-input', type: 'search', placeholder: t('search.placeholder'),
       value: S.search.query, 'aria-label': 'Поиск',
     });
     const results = U.el('div', { class: 'search-results' });
@@ -868,12 +868,12 @@ const Render = (() => {
     U.clear(host);
     const q = String(query || '').trim();
     if (!q) {
-      host.appendChild(U.el('div', { class: 'empty small' }, [Icons.make('search', 32), U.el('p', { text: 'Начните вводить запрос' })]));
+      host.appendChild(U.el('div', { class: 'empty small' }, [Icons.make('search', 32), U.el('p', { text: t('search.empty') })]));
       return;
     }
     const results = S.search.results || [];
     if (!results.length) {
-      host.appendChild(U.el('div', { class: 'empty small' }, [U.el('p', { text: 'Ничего не найдено' })]));
+      host.appendChild(U.el('div', { class: 'empty small' }, [U.el('p', { text: t('search.nothing') })]));
       return;
     }
     results.forEach(({ chat, count }) => {
@@ -883,7 +883,7 @@ const Render = (() => {
           avatar(chat.title, chat.color, 2),
           U.el('div', { class: 'search-chat-main' }, [
             U.el('span', { class: 'search-chat-title', text: chat.title }),
-            U.el('span', { class: 'search-chat-count', text: count + ' ' + U.plural(count, 'совпадение', 'совпадения', 'совпадений') }),
+            U.el('span', { class: 'search-chat-count', text: count + ' ' + I18n.plural(count, 'search.matches') }),
           ]),
         ]),
       ]);

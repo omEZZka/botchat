@@ -118,6 +118,23 @@ const Pickers = (() => {
     });
     content.appendChild(accentRow);
 
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Язык / Language' }));
+    const langRow = U.el('div', { class: 'seg' });
+    [{ id: 'ru', label: 'RU' }, { id: 'en', label: 'EN' }].forEach((lang) => {
+      langRow.appendChild(U.el('button', {
+        class: 'seg-item' + (S.settings.language === lang.id ? ' active' : ''),
+        type: 'button', text: lang.label,
+        'aria-label': lang.id === 'ru' ? 'Русский' : 'English',
+        onclick: () => {
+          Store.setSetting('language', lang.id);
+          Render.closeSheet();
+          Render.render();
+          appSettings();
+        },
+      }));
+    });
+    content.appendChild(langRow);
+
     content.appendChild(U.el('h3', { class: 'section-title', text: 'Агент' }));
     content.appendChild(numberRow('Лимит шагов', S.settings.stepLimit, (v) => Store.setSetting('stepLimit', v)));
     content.appendChild(toggleRow('Отправка по Enter', S.settings.sendOnEnter, (v) => Store.setSetting('sendOnEnter', v)));

@@ -8,27 +8,27 @@ const Settings2 = (() => {
     U.clear(view);
     const section = U.el('section', { class: 'screen settings-screen' });
     section.appendChild(U.el('header', { class: 'topbar' }, [
-      U.el('h1', { class: 'screen-title', text: 'Настройки' }),
+      U.el('h1', { class: 'screen-title', text: t('settings.title') }),
     ]));
 
     const profile = U.el('div', { class: 'profile-card' }, [
       Render.avatar('botCHAT', 2, 2),
       U.el('div', { class: 'profile-main' }, [
-        U.el('span', { class: 'profile-name', text: 'Профиль по умолчанию' }),
+        U.el('span', { class: 'profile-name', text: t('settings.profile') }),
         U.el('span', { class: 'profile-sub', text: modelLine() }),
       ]),
     ]);
     section.appendChild(profile);
 
     const rows = [
-      { icon: 'shield', label: 'Профили', sub: (S.env && S.env.profile) || 'изоляция рабочих папок', action: () => Pickers.profilesSheet() },
-      { icon: 'key', label: 'Провайдеры', sub: connectedCount(), action: () => ProvidersUI.openProvidersScreen() },
-      { icon: 'model', label: 'Модели', sub: modelLine(), action: () => ProvidersUI.openModelSheet() },
-      { icon: 'sparkle', label: 'Агент', sub: 'Лимит ' + S.settings.stepLimit + ' шагов · режим ' + modeLabel(), action: () => Pickers.appSettings() },
-      { icon: 'bell', label: 'Уведомления', sub: S.settings.notifications ? 'включены' : 'выключены', action: () => Pickers.appSettings() },
-      { icon: 'palette', label: 'Внешний вид', sub: themeLabel() + ' · ' + accentLabel(), action: () => Pickers.appSettings() },
-      { icon: 'backup', label: 'Бэкап', sub: 'экспорт и восстановление', action: () => Pickers.exportSheet() },
-      { icon: 'info', label: 'О приложении', sub: (S.env && S.env.versionName) || '', action: () => Pickers.aboutSheet() },
+      { icon: 'shield', label: t('settings.profiles'), sub: '', action: () => Pickers.profilesSheet() },
+      { icon: 'key', label: t('settings.providers'), sub: connectedCount(), action: () => ProvidersUI.openProvidersScreen() },
+      { icon: 'model', label: t('settings.models'), sub: modelLine(), action: () => ProvidersUI.openModelSheet() },
+      { icon: 'sparkle', label: t('settings.agent'), sub: S.settings.stepLimit + ' · ' + modeLabel(), action: () => Pickers.appSettings() },
+      { icon: 'bell', label: t('settings.notifications'), sub: S.settings.notifications ? 'on' : 'off', action: () => Pickers.appSettings() },
+      { icon: 'palette', label: t('settings.appearance'), sub: themeLabel() + ' · ' + accentLabel(), action: () => Pickers.appSettings() },
+      { icon: 'backup', label: t('settings.backup'), sub: '', action: () => Pickers.exportSheet() },
+      { icon: 'info', label: t('settings.about'), sub: (S.env && S.env.versionName) || '', action: () => Pickers.aboutSheet() },
     ];
 
     const list = U.el('div', { class: 'settings-list' });
@@ -48,7 +48,7 @@ const Settings2 = (() => {
 
     section.appendChild(U.el('div', { class: 'settings-foot' }, [
       U.el('span', { class: 'muted small', text: 'botCHAT ' + ((S.env && S.env.versionName) || '').trim() }),
-      U.el('span', { class: 'muted small', text: 'без телеметрии' }),
+      U.el('span', { class: 'muted small', text: t('settings.telemetry') }),
     ]));
     view.appendChild(section);
   };

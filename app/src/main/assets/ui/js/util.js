@@ -140,11 +140,12 @@ const U = (() => {
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const diff = Math.floor((start - dayStart) / 86400000);
-    if (diff === 0) return 'Сегодня';
-    if (diff === 1) return 'Вчера';
-    if (diff < 7) return 'На этой неделе';
-    if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) return 'В этом месяце';
-    return 'Раньше';
+    const tr = (key, fallback) => (window.I18n ? window.I18n.t(key, fallback) : fallback);
+    if (diff === 0) return tr('chats.group.today', 'Сегодня');
+    if (diff === 1) return tr('chats.group.yesterday', 'Вчера');
+    if (diff < 7) return tr('chats.group.week', 'На этой неделе');
+    if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) return tr('chats.group.month', 'В этом месяце');
+    return tr('chats.group.earlier', 'Раньше');
   };
 
   const bytes = (n) => {
