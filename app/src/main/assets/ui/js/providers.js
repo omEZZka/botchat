@@ -274,13 +274,13 @@ const ProvidersUI = (() => {
         list.appendChild(U.el('p', { class: 'muted small', text: 'Модели не загружены. Проверьте провайдера в настройках.' }));
         return;
       }
-      grouped.forEach((models, providerId) => {
-        const provider = S.providers.find((p) => p.id === providerId);
-        list.appendChild(U.el('div', { class: 'model-group-label', text: provider ? provider.name : providerId }));
-        models.forEach((model) => {
-          const active = chat && chat.model === model.id && (chat.provider || S.settings.activeProvider) === providerId;
-          const row = U.el('button', {
-            class: 'model-row' + (active ? ' active' : ''), type: 'button',
+      const pinned = new Set(S.settings.pinnedModels || []);
+      const modelRow = (providerId, model) => {
+        const active = chat && chat.model === model.id && (chat.provider || S.settings.activeProvider) === providerId;
+        const key = providerId + '|' + model.id;
+        const row = U.el('div', { class: 'model-row' + (active ? ' active' : '') }, [
+          U.el('button', {
+            class: 'model-row-main', type: 'button',
             onclick: async () => {
               await Store.setChatModel(S.chatId, providerId, model.id);
               S.settings.activeProvider = providerId;
@@ -293,9 +293,35 @@ const ProvidersUI = (() => {
             Icons.make(active ? 'check' : 'model', 16),
             U.el('span', { class: 'model-name', text: model.name || model.id }),
             U.el('span', { class: 'model-meta', text: (model.context ? Math.round(model.context / 1000) + 'k' : '') + (model.reasoning ? ' · reasoning' : '') }),
-          ]);
-          list.appendChild(row);
+          ]),
+          U.el('button', {
+            class: 'model-pin' + (pinned.has(key) ? ' on' : ''), type: 'button',
+            'aria-label': pinned.has(key) ? 'Открепить модель' : 'Закрепить модель',
+            onclick: (ev) => {
+              ev.stopPropagation();
+              const next = new Set(S.settings.pinnedModels || []);
+              if (next.has(key)) next.delete(key); else next.add(key);
+              Store.setSetting('pinnedModels', Array.from(next));
+              renderList(search.value);
+            },
+          }, Icons.make('pin', 14)),
+        ]);
+        return row;
+      };
+      const pinnedModels = [];
+      grouped.forEach((models, providerId) => {
+        models.forEach((model) => {
+          if (pinned.has(providerId + '|' + model.id)) pinnedModels.push({ providerId, model });
         });
+      });
+      if (pinnedModels.length) {
+        list.appendChild(U.el('div', { class: 'model-group-label', text: 'Закреплённые' }));
+        pinnedModels.forEach(({ providerId, model }) => list.appendChild(modelRow(providerId, model)));
+      }
+      grouped.forEach((models, providerId) => {
+        const provider = S.providers.find((p) => p.id === providerId);
+        list.appendChild(U.el('div', { class: 'model-group-label', text: provider ? provider.name : providerId }));
+        models.forEach((model) => list.appendChild(modelRow(providerId, model)));
       });
     };
     search.addEventListener('input', () => renderList(search.value));
