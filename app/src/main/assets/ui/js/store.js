@@ -118,6 +118,49 @@ const Db = (() => {
   const NAME = 'botchat';
   const VERSION = 2;
   let dbPromise = null;
+
+  const memory = new Map();
+  const memoryDb = () => ({
+    _memory: true,
+    objectStoreNames: { contains: () => true },
+    createObjectStore: () => {},
+    close: () => {},
+    transaction: () => ({
+      objectStore: (name) => memoryStore(name),
+    }),
+  });
+
+  const memoryStore = (name) => {
+    const key = (v) => String(v && (v.id !== undefined ? v.id : v.key));
+    return {
+      put: (value) => {
+        memory.set(name + ':' + key(value), value);
+        return immediate({});
+      },
+      get: (k) => immediate(memory.get(name + ':' + String(k))),
+      getAll: () => immediate(Array.from(memory.entries())
+        .filter(([k]) => k.startsWith(name + ':'))
+        .map(([, v]) => v)),
+      delete: (k) => {
+        memory.delete(name + ':' + String(k));
+        return immediate({});
+      },
+      index: () => ({
+        getAll: (chatId) => immediate(Array.from(memory.entries())
+          .filter(([k]) => k.startsWith(name + ':'))
+          .map(([, v]) => v)
+          .filter((v) => v && v.chatId === chatId)),
+      }),
+      createIndex: () => {},
+    };
+  };
+
+  const immediate = (value) => {
+    const req = { result: value, onsuccess: null, onerror: null };
+    setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+    return req;
+  };
+
   const pending = new Map();
 
   const open = () => {
@@ -131,9 +174,14 @@ const Db = (() => {
       };
       let req;
       try {
+        if (typeof indexedDB === 'undefined' || !indexedDB || typeof indexedDB.open !== 'function') {
+          resolve(memoryDb());
+          return;
+        }
         req = indexedDB.open(NAME, VERSION);
       } catch (err) {
-        reject(err);
+        console.warn('IndexedDB unavailable, using memory store', err);
+        resolve(memoryDb());
         return;
       }
       const timer = setTimeout(() => {
@@ -183,47 +231,7 @@ const Db = (() => {
    * Резервное хранилище в памяти: приложение остаётся рабочим,
    * даже если IndexedDB недоступен или заблокирован.
    */
-  const memory = new Map();
-  const memoryDb = () => ({
-    _memory: true,
-    objectStoreNames: { contains: () => true },
-    createObjectStore: () => {},
-    close: () => {},
-    transaction: () => ({
-      objectStore: (name) => memoryStore(name),
-    }),
-  });
 
-  const memoryStore = (name) => {
-    const key = (v) => String(v && (v.id !== undefined ? v.id : v.key));
-    return {
-      put: (value) => {
-        memory.set(name + ':' + key(value), value);
-        return immediate({});
-      },
-      get: (k) => immediate(memory.get(name + ':' + String(k))),
-      getAll: () => immediate(Array.from(memory.entries())
-        .filter(([k]) => k.startsWith(name + ':'))
-        .map(([, v]) => v)),
-      delete: (k) => {
-        memory.delete(name + ':' + String(k));
-        return immediate({});
-      },
-      index: () => ({
-        getAll: (chatId) => immediate(Array.from(memory.entries())
-          .filter(([k]) => k.startsWith(name + ':'))
-          .map(([, v]) => v)
-          .filter((v) => v && v.chatId === chatId)),
-      }),
-      createIndex: () => {},
-    };
-  };
-
-  const immediate = (value) => {
-    const req = { result: value, onsuccess: null, onerror: null };
-    setTimeout(() => req.onsuccess && req.onsuccess(), 0);
-    return req;
-  };
 
   const tx = async (storeName, mode) => {
     const db = await open();
