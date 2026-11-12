@@ -74,6 +74,16 @@
     }
 
     window.addEventListener('error', function (e) {
+      try {
+        if (window.BCBridge) {
+          window.BCBridge.call('log', JSON.stringify({
+            level: 'error',
+            message: (e && e.message) || 'script error',
+            source: (e && e.filename) || '',
+            line: (e && e.lineno) || 0
+          }));
+        }
+      } catch (_) {}
       if (!finished && e && e.message) fail(e.message);
     });
     window.addEventListener('unhandledrejection', function (e) {

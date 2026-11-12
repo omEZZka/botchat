@@ -21,6 +21,19 @@ const Boot = (() => {
     new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
   ]);
 
+  const logError = (where, err) => {
+    try {
+      Native.call('log', {
+        level: 'error',
+        message: where + ': ' + (err && err.message ? err.message : String(err)),
+        source: 'boot.js',
+        line: 0,
+      });
+    } catch (_) {
+      /* логирование не должно ломать запуск */
+    }
+  };
+
   const start = async () => {
     document.documentElement.dataset.theme = S.settings.theme || 'dark';
     Accent.apply();
@@ -62,11 +75,23 @@ const Boot = (() => {
     });
 
     stage('Провайдеры', 26);
-    await withTimeout(ProvidersUI.load(), 8000, null);
+    try {
+      await withTimeout(ProvidersUI.load(), 8000, null);
+    } catch (err) {
+      logError('providers', err);
+    }
     stage('История чатов', 48);
-    await withTimeout(Store.load(), 15000, null);
+    try {
+      await withTimeout(Store.load(), 15000, null);
+    } catch (err) {
+      logError('history', err);
+    }
     stage('Восстановление состояния', 72);
-    await withTimeout(restoreAgentState(), 5000, null);
+    try {
+      await withTimeout(restoreAgentState(), 5000, null);
+    } catch (err) {
+      logError('restore', err);
+    }
     Bus.emit('queue:flush');
 
     if (!S.booted) {

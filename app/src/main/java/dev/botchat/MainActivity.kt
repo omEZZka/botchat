@@ -141,7 +141,16 @@ class MainActivity : Activity(), BridgeHost {
                 error: android.webkit.WebResourceError
             ) {
                 if (request.isForMainFrame) {
-                    showError("Не удалось загрузить интерфейс: " + (error.description ?: "ошибка"))
+                    if (loadAttempts < 2) {
+                        setStage("Повтор загрузки", 6)
+                        handler.postDelayed({ loadApp() }, 250)
+                    } else {
+                        showError(
+                            "Не удалось загрузить интерфейс: " +
+                                (error.description ?: "ошибка") +
+                                ". Нажмите «Повторить»."
+                        )
+                    }
                 }
             }
 
@@ -188,13 +197,19 @@ class MainActivity : Activity(), BridgeHost {
         setContentView(root)
         registerEvents()
         startWatchdog()
-        loadApp()
+        handler.postDelayed({ loadApp() }, 60)
         handleIntent(intent)
     }
 
+    private var loadAttempts = 0
+
     private fun loadApp() {
         ready = false
-        setStage("Загрузка интерфейса", 4)
+        loadAttempts += 1
+        setStage(if (loadAttempts > 1) "Повторная загрузка интерфейса" else "Загрузка интерфейса", 4)
+        if (loadAttempts > 1) {
+            web.clearCache(true)
+        }
         web.loadUrl("https://appassets.androidplatform.net/assets/ui/index.html")
     }
 
@@ -270,6 +285,7 @@ class MainActivity : Activity(), BridgeHost {
             }
             setOnClickListener {
                 hideError()
+                loadAttempts = 0
                 loadApp()
                 startWatchdog()
             }
@@ -448,6 +464,16 @@ class MainActivity : Activity(), BridgeHost {
             return try {
                 val payload = if (arg.isBlank()) JSONObject() else JSONObject(arg)
                 when (method) {
+                    "log" -> {
+                        val level = payload.optString("level", "info")
+                        val message = payload.optString("message")
+                        android.util.Log.println(
+                            if (level == "error") android.util.Log.ERROR else android.util.Log.INFO,
+                            "botCHAT/JS",
+                            message + " " + payload.optString("source") + ":" + payload.optInt("line")
+                        )
+                        ok()
+                    }
                     "boot" -> {
                         setStage(
                             payload.optString("stage", "Загрузка"),

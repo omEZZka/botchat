@@ -112,11 +112,25 @@ object Runtime {
     }
 
     fun envInfo(context: Context): JSONObject {
+        val dir = rootfsDir(context)
+        val size = if (dir.exists()) cachedDirSize(dir) else 0L
         return JSONObject()
             .put("rootfs", rootfsReady())
             .put("bash", bashAvailable())
             .put("proot", prootBinary(context).exists())
-            .put("size", dirSize(rootfsDir(context)))
+            .put("size", size)
+    }
+
+    /** Размер rootfs считается один раз и кешируется: обход тысяч файлов на старте недопустим. */
+    private var cachedSize = -1L
+    private var cachedAt = 0L
+
+    private fun cachedDirSize(dir: File): Long {
+        val now = System.currentTimeMillis()
+        if (cachedSize >= 0 && now - cachedAt < 60_000) return cachedSize
+        cachedSize = runCatching { dirSize(dir) }.getOrDefault(0)
+        cachedAt = now
+        return cachedSize
     }
 
     fun ensureDirs(context: Context) {
