@@ -253,15 +253,18 @@ object Net {
     fun quotaScope(code: Int, body: String): String {
         if (code != 429 && code != 402) return "model"
         val lower = body.lowercase()
+        // Только однозначные признаки блокировки всего аккаунта.
+        // «quota exceeded», «rate limit», «too many requests» — это лимит модели,
+        // иначе одна модель выключала бы весь провайдер при живом балансе.
         val accountMarkers = listOf(
             "freeusagelimiterror",
-            "free usage limit",
-            "quota exceeded",
+            "free usage limit reached",
             "insufficient_quota",
-            "billing",
-            "subscription",
-            "credit balance",
-            "credits"
+            "credit balance is too low",
+            "billing_hard_limit_reached",
+            "payment required",
+            "no credits remaining",
+            "account is not active"
         )
         return if (accountMarkers.any { lower.contains(it) }) "account" else "model"
     }

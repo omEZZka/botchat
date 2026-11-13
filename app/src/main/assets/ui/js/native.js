@@ -42,7 +42,7 @@ const Native = (() => {
         clearTimeout(timer);
         resolve(value);
       };
-      const timer = setTimeout(() => finish({ ok: false, error: 'timeout' }), timeoutMs || 45000);
+      const timer = setTimeout(() => finish({ ok: false, error: 'timeout' }), timeoutMs || 120000);
       pending.set(id, finish);
       try {
         b.async(method, JSON.stringify(payload || {}), id);

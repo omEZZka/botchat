@@ -154,22 +154,63 @@ const ProvidersUI = (() => {
 
   const checkHealth = async (provider, button) => {
     if (button) button.disabled = true;
-    const res = await Native.api('providers.health', { providerId: provider.id });
-    if (button) button.disabled = false;
-    if (res && res.ok) {
-      provider.healthy = res.healthy;
-      provider.modelCount = res.modelCount || provider.modelCount;
-      Render.toast(res.healthy
-        ? 'Подключение работает · моделей: ' + (res.modelCount || 0)
-        : 'Подключение не удалось' + (res.error ? ': ' + res.error : ''));
-      if (res.healthy) {
-        const refreshed = await Native.api('models.refresh');
-        if (refreshed && refreshed.ok) S.models = refreshed.models || S.models;
-      }
-      Bus.emit('render');
-    } else {
-      Render.toast((res && res.error) || 'Проверка не удалась');
+    if (button) button.textContent = 'Проверяю…';
+    const res = await Native.api('providers.verify', { providerId: provider.id });
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Проверить';
     }
+    if (!res || !res.ok) {
+      Render.toast((res && res.error) || 'Проверка не удалась');
+      return;
+    }
+    const working = res.working || [];
+    const rejected = res.rejected || [];
+    S.models = res.models || S.models;
+    await load();
+    Render.closeSheet();
+    openVerifyReport(provider, working, rejected, res.total || (working.length + rejected.length));
+  };
+
+  const reasonText = (reason, code) => {
+    switch (reason) {
+      case 'account_limit': return 'лимит аккаунта' + (code ? ' · HTTP ' + code : '');
+      case 'rate_limit': return 'лимит запросов' + (code ? ' · HTTP ' + code : '');
+      case 'no_access': return 'нет доступа' + (code ? ' · HTTP ' + code : '');
+      case 'not_found': return 'не найдена';
+      case 'network': return 'нет связи';
+      case 'empty': return 'пустой ответ';
+      default: return 'ошибка' + (code ? ' · HTTP ' + code : '');
+    }
+  };
+
+  const openVerifyReport = (provider, working, rejected, total) => {
+    const content = U.el('div', { class: 'verify-sheet' });
+    content.appendChild(U.el('div', { class: 'verify-summary' }, [
+      U.el('span', { class: 'verify-ok', text: working.length + ' работают' }),
+      rejected.length ? U.el('span', { class: 'verify-bad', text: rejected.length + ' отклонены' }) : null,
+      U.el('span', { class: 'muted small', text: 'из ' + total }),
+    ]));
+    if (working.length) {
+      content.appendChild(U.el('div', { class: 'verify-title', text: 'Доступные' }));
+      working.forEach((id) => content.appendChild(U.el('div', { class: 'probe-model ok' }, [
+        U.el('span', { class: 'verify-dot ok' }),
+        U.el('span', { class: 'probe-name', text: id }),
+      ])));
+    }
+    if (rejected.length) {
+      content.appendChild(U.el('div', { class: 'verify-title', text: 'Недоступные — в список не попали' }));
+      rejected.forEach((item) => content.appendChild(U.el('div', { class: 'probe-model bad' }, [
+        U.el('span', { class: 'verify-dot bad' }),
+        U.el('span', { class: 'probe-name', text: item.id }),
+        U.el('span', { class: 'probe-reason', text: reasonText(item.reason, item.code) }),
+      ])));
+    }
+    content.appendChild(U.el('p', {
+      class: 'muted small',
+      text: 'Проверка — короткий реальный запрос к каждой модели. Лимит запоминается на несколько минут.',
+    }));
+    Render.openSheet({ title: provider.name, content });
   };
 
   const disableProvider = async (provider) => {
@@ -209,70 +250,110 @@ const ProvidersUI = (() => {
 
     const probe = U.el('div', { class: 'probe-models' });
     const picked = new Set();
+    const reportByModel = new Map();
+    let verified = false;
+
+    const renderReport = (working, rejected, total) => {
+      U.clear(probe);
+      verified = true;
+      picked.clear();
+      reportByModel.clear();
+      probe.appendChild(U.el('div', { class: 'verify-summary' }, [
+        U.el('span', { class: 'verify-ok', text: working.length + ' работают' }),
+        rejected.length
+          ? U.el('span', { class: 'verify-bad', text: rejected.length + ' отклонены' })
+          : null,
+        U.el('span', { class: 'muted small', text: 'из ' + total }),
+      ]));
+
+      if (working.length) {
+        probe.appendChild(U.el('div', { class: 'verify-title', text: 'Доступные' }));
+        working.forEach((id) => {
+          picked.add(id);
+          reportByModel.set(id, { ok: true });
+          probe.appendChild(U.el('label', { class: 'probe-model ok' }, [
+            U.el('span', { class: 'verify-dot ok' }),
+            U.el('span', { class: 'probe-name', text: id }),
+          ]));
+        });
+      }
+      if (rejected.length) {
+        probe.appendChild(U.el('div', { class: 'verify-title', text: 'Недоступные — в список не попадут' }));
+        rejected.forEach((item) => {
+          reportByModel.set(item.id, item);
+          probe.appendChild(U.el('div', { class: 'probe-model bad' }, [
+            U.el('span', { class: 'verify-dot bad' }),
+            U.el('span', { class: 'probe-name', text: item.id }),
+            U.el('span', { class: 'probe-reason', text: reasonText(item.reason, item.code) }),
+          ]));
+        });
+      }
+    };
 
     const probeButton = U.el('button', {
-      class: 'btn', text: 'Прозвонить',
+      class: 'btn', text: 'Проверить модели',
       onclick: async () => {
         const baseUrl = fields.baseUrl.value.trim();
         if (!baseUrl) {
           Render.toast('Укажите Base URL');
           return;
         }
+        const key = fields.key.value.trim();
+        const id = fields.id.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+        if (!id) {
+          Render.toast('Укажите ID провайдера');
+          return;
+        }
         probeButton.disabled = true;
         U.clear(probe);
         probe.appendChild(U.el('div', { class: 'probe-row' }, [
           U.el('span', { class: 'spinner tiny' }),
-          U.el('span', { text: 'Запрашиваю список моделей…' }),
+          U.el('span', { text: 'Проверяю модели коротким запросом…' }),
         ]));
-        const res = await Native.api('providers.probe', {
-          baseUrl,
+
+        // Сохраняем провайдера во временном виде, чтобы проверка шла по реальным ключам/заголовкам.
+        const saved = await Native.api('providers.add', {
+          id, name: fields.name.value.trim() || id, baseUrl,
           apiType: typeSelect.value,
-          key: fields.key.value.trim(),
+          headers: U.safeJson(fields.headers.value || '{}', {}),
+          key,
+          models: [],
+        });
+        if (!saved || !saved.ok) {
+          probeButton.disabled = false;
+          U.clear(probe);
+          probe.appendChild(U.el('p', {
+            class: 'muted small', text: (saved && saved.error) || 'Не удалось сохранить провайдера для проверки',
+          }));
+          return;
+        }
+
+        const list = await Native.api('providers.probe', {
+          baseUrl, apiType: typeSelect.value, key,
           headers: U.safeJson(fields.headers.value || '{}', {}),
         });
-        probeButton.disabled = false;
-        U.clear(probe);
-        if (!res || !res.ok) {
-          probe.appendChild(U.el('p', {
-            class: 'muted small', text: 'Не удалось получить модели: ' + ((res && res.error) || 'нет ответа'),
-          }));
-          return;
-        }
-        const models = res.models || [];
-        if (!models.length) {
+        const ids = (list && list.ok && (list.models || []).map((m) => m.id)) || [];
+        if (!ids.length) {
+          probeButton.disabled = false;
+          U.clear(probe);
           probe.appendChild(U.el('p', {
             class: 'muted small',
-            text: 'Сервер ответил, но моделей нет. Можно сохранить провайдера и добавить модель вручную.',
+            text: 'Провайдер не вернул список моделей. Проверьте Base URL и ключ.',
           }));
           return;
         }
-        picked.clear();
-        probe.appendChild(U.el('div', { class: 'probe-head' }, [
-          U.el('span', { class: 'muted small', text: 'Найдено: ' + models.length }),
-          U.el('button', {
-            class: 'link-btn', text: 'все / ничего',
-            onclick: (ev) => {
-              const boxes = U.$$('.probe-model input', probe);
-              const any = boxes.some((b) => !b.checked);
-              boxes.forEach((b) => { b.checked = any; });
-              picked.clear();
-              if (any) models.forEach((m) => picked.add(m.id));
-              ev.currentTarget.textContent = any ? 'снять все' : 'выбрать все';
-            },
-          }),
-        ]));
-        models.forEach((model) => {
-          const cb = U.el('input', { type: 'checkbox', checked: 'checked' });
-          picked.add(model.id);
-          cb.addEventListener('change', () => {
-            if (cb.checked) picked.add(model.id); else picked.delete(model.id);
-          });
-          probe.appendChild(U.el('label', { class: 'probe-model' }, [
-            cb, U.el('span', { text: model.name && model.name !== model.id
-              ? model.name + ' · ' + model.id
-              : model.id }),
-          ]));
-        });
+
+        const res = await Native.api('providers.verify', { providerId: id, models: ids });
+        probeButton.disabled = false;
+        if (!res || !res.ok) {
+          U.clear(probe);
+          probe.appendChild(U.el('p', {
+            class: 'muted small', text: (res && res.error) || 'Проверка не удалась',
+          }));
+          return;
+        }
+        renderReport(res.working || [], res.rejected || [], res.total || ids.length);
+        await load();
       },
     });
 
@@ -284,6 +365,14 @@ const ProvidersUI = (() => {
         const baseUrl = fields.baseUrl.value.trim();
         if (!id) { Render.toast('Заполните ID'); return; }
         if (!/^https?:\/\//.test(baseUrl)) { Render.toast('Base URL должен начинаться с http:// или https://'); return; }
+        if (!verified) {
+          Render.toast('Сначала проверьте модели — в список попадут только доступные');
+          return;
+        }
+        if (!picked.size) {
+          Render.toast('Нет рабочих моделей: нечего подключать');
+          return;
+        }
         saveButton.disabled = true;
         saveButton.textContent = 'Сохраняю…';
         const res = await Native.api('providers.add', {
@@ -301,8 +390,7 @@ const ProvidersUI = (() => {
           Render.toast((res && res.error) || 'Не удалось сохранить провайдера');
           return;
         }
-        // Сразу подтягиваем модели добавленного провайдера, не закрывая шторку в «пустоту».
-        saveButton.textContent = 'Загружаю модели…';
+        // В кеш попадают только проверенные рабочие модели.
         const refreshed = await Native.api('models.refresh');
         if (refreshed && refreshed.ok) S.models = refreshed.models || S.models;
         await load();

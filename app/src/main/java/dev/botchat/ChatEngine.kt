@@ -127,7 +127,10 @@ object ChatEngine {
 
         for ((candidateProvider, candidateModel) in ordered) {
             if (skippedProviders.contains(candidateProvider.id)) continue
-            val accountWait = Quota.accountRemaining(context, candidateProvider.id)
+            // Аккаунтный лимит пропускаем только если у провайдера нет своих ключей:
+            // при платном балансе 429 относится к модели, а не ко всему аккаунту.
+            val hasKeys = Secrets.keyRing(context, candidateProvider.id).isNotEmpty()
+            val accountWait = if (hasKeys) 0L else Quota.accountRemaining(context, candidateProvider.id)
             if (accountWait > 0) {
                 skippedProviders.add(candidateProvider.id)
                 lastRetryAfter = maxOf(lastRetryAfter, accountWait)

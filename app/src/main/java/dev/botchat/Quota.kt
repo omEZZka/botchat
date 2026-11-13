@@ -65,8 +65,8 @@ object Quota {
     @Synchronized
     fun markLimited(context: Context, providerId: String, modelId: String, retryAfterMs: Long) {
         val data = load(context)
-        val wait = if (retryAfterMs > 0) retryAfterMs else 60_000L
-        val until = System.currentTimeMillis() + wait.coerceIn(1_000, 900_000)
+        val wait = if (retryAfterMs > 0) retryAfterMs else 30_000L
+        val until = System.currentTimeMillis() + wait.coerceIn(1_000, 300_000)
         data.put(key(providerId, modelId), until)
         if (data.length() > MAX_ENTRIES) {
             val entries = data.keys().asSequence()

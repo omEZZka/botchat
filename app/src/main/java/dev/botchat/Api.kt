@@ -17,6 +17,7 @@ object Api {
         "providers.health",
         "models.refresh",
         "models.probe",
+        "providers.verify",
         "chat.start",
         "providers.add"
     )
@@ -53,6 +54,9 @@ object Api {
                 JSONObject().put("ok", true)
             }
             "models.refresh" -> Models.refresh(context)
+            "providers.verify" -> {
+                Models.verify(context, payload.optString("providerId"), payload.optJSONArray("models"))
+            }
             "models.hide" -> Models.hide(
                 context,
                 payload.optString("providerId"),
@@ -302,6 +306,75 @@ object Models {
             tmp.copyTo(f, overwrite = true)
             tmp.delete()
         }
+    }
+
+    /**
+     * Полная проверка: список моделей провайдера + короткий запрос к каждой.
+     * Возвращает только рабочие модели и отчёт по остальным.
+     */
+    fun verify(context: Context, providerId: String, requested: JSONArray?): JSONObject {
+        val provider = Providers.byId(context, providerId)
+            ?: return JSONObject().put("ok", false).put("error", "Провайдер не найден")
+
+        val candidates = LinkedHashSet<String>()
+        if (requested != null) {
+            for (i in 0 until requested.length()) {
+                val id = requested.optString(i)
+                if (id.isNotBlank()) candidates.add(id)
+            }
+        }
+        if (candidates.isEmpty()) {
+            val fetched = runCatching { Providers.fetchModels(context, provider) }
+                .getOrElse { emptyList() }
+            fetched.forEach { candidates.add(it.id) }
+        }
+        if (candidates.isEmpty()) {
+            return JSONObject().put("ok", false).put("error", "Провайдер не вернул список моделей")
+        }
+
+        val report = ModelCheck.checkProvider(context, provider, candidates.toList()) { _, _ -> }
+        val results = report.optJSONArray("results") ?: JSONArray()
+
+        val working = JSONArray()
+        val rejected = JSONArray()
+
+        // Сначала сохраняем рабочие модели в кеш.
+        val cached = cachedRaw(context)
+        var added = 0
+        for (i in 0 until results.length()) {
+            val item = results.getJSONObject(i)
+            val id = item.optString("id")
+            if (item.optBoolean("ok")) {
+                working.put(id)
+                var present = false
+                for (j in 0 until cached.length()) {
+                    val entry = cached.getJSONObject(j)
+                    if (entry.optString("provider") == providerId && entry.optString("id") == id) present = true
+                }
+                if (!present) {
+                    cached.put(
+                        JSONObject().put("id", id).put("name", id).put("provider", providerId)
+                    )
+                    added += 1
+                }
+                // Ранее скрытая пользователем модель остаётся скрытой.
+            } else {
+                rejected.put(
+                    JSONObject()
+                        .put("id", id)
+                        .put("reason", item.optString("reason"))
+                        .put("code", item.optInt("code"))
+                )
+            }
+        }
+        if (added > 0) save(context, cached)
+        return JSONObject()
+            .put("ok", true)
+            .put("providerId", providerId)
+            .put("total", results.length())
+            .put("working", working)
+            .put("rejected", rejected)
+            .put("models", cached(context))
     }
 
     fun refresh(context: Context): JSONObject {
