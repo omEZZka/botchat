@@ -322,7 +322,16 @@ const ProvidersUI = (() => {
       }
       grouped.forEach((models, providerId) => {
         const provider = S.providers.find((p) => p.id === providerId);
-        list.appendChild(U.el('div', { class: 'model-group-label', text: provider ? provider.name : providerId }));
+        const limited = (S.quota || {})['@account|' + providerId];
+        const label = (provider ? provider.name : providerId) + (!provider || !provider.needsKey ? ' · free' : '');
+        const head = U.el('div', { class: 'model-group-label' }, [
+          U.el('span', { text: label }),
+          limited ? U.el('span', {
+            class: 'quota-badge',
+            text: 'лимит ' + Math.ceil(limited / 1000) + ' с',
+          }) : null,
+        ]);
+        list.appendChild(head);
         models.forEach((model) => list.appendChild(modelRow(providerId, model)));
       });
     };
@@ -379,18 +388,20 @@ const ProvidersUI = (() => {
     keys.sort((a, b) => limited[a] - limited[b]).forEach((key) => {
       const split = key.indexOf('|');
       const providerId = split < 0 ? key : key.slice(0, split);
-      const modelId = split < 0 ? '' : key.slice(split + 1);
+      const rawModel = split < 0 ? '' : key.slice(split + 1);
+      const modelId = rawModel === '@account' ? '' : rawModel;
       const provider = (S.providers || []).find((p) => p.id === providerId);
       list.appendChild(U.el('div', { class: 'quota-row' }, [
         U.el('span', {
           class: 'quota-name',
-          text: (provider ? provider.name : providerId) + (modelId ? ' · ' + modelId : ''),
+          text: (provider ? provider.name : providerId) +
+            (rawModel === '@account' ? ' · все модели' : modelId ? ' · ' + modelId : ''),
         }),
         U.el('span', { class: 'quota-wait', text: Math.ceil(limited[key] / 1000) + ' с' }),
         U.el('button', {
           class: 'link-btn', text: 'сбросить',
           onclick: async () => {
-            await Native.api('quota.clear', { providerId, modelId });
+            await Native.api('quota.clear', { providerId, modelId: rawModel });
             Render.closeSheet();
             openQuota();
           },

@@ -43,7 +43,7 @@ object SubAgents {
             persist(context)
             notifyStatus(task)
             val providerId = task.optString("provider").ifBlank { "opencode" }
-            val model = task.optString("model").ifBlank { "zen-free" }
+            val model = task.optString("model").ifBlank { "big-pickle" }
             val prompt = task.optString("prompt").ifBlank { task.optString("description") }
             val result = SubAgentRunner.run(context, providerId, model, prompt)
             task.put("status", if (result.optBoolean("ok")) "done" else "error")
@@ -132,6 +132,30 @@ object SubAgents {
 object SubAgentRunner {
 
     fun run(context: Context, providerId: String, model: String, prompt: String): JSONObject {
+        val first = attempt(context, providerId, model, prompt)
+        if (first.optBoolean("ok")) return first
+        val errorText = first.optString("error")
+        if (errorText.contains("429") || errorText.contains("лимит", ignoreCase = true)) {
+            Quota.markAccountLimited(context, providerId, 600_000L)
+        }
+        // Резерв: бесплатные провайдеры без ключа, доступные сразу.
+        for (provider in Providers.all(context).filter { !it.needsKey }) {
+            if (provider.id == providerId) continue
+            if (Quota.accountRemaining(context, provider.id) > 0) continue
+            for (candidate in Providers.defaultModels(provider.id)) {
+                val res = attempt(context, provider.id, candidate.id, prompt)
+                if (res.optBoolean("ok")) return res
+            }
+        }
+        return first
+    }
+
+    private fun attempt(
+        context: Context,
+        providerId: String,
+        model: String,
+        prompt: String
+    ): JSONObject {
         val provider = Providers.byId(context, providerId)
             ?: return JSONObject().put("ok", false).put("error", "провайдер недоступен")
         val keys = Secrets.keyRing(context, provider.id)

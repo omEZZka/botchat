@@ -43,7 +43,14 @@ object Api {
             "models.refresh" -> Models.refresh(context)
             "quota.info" -> Quota.snapshot(context)
             "quota.clear" -> {
-                Quota.clear(context, payload.optString("providerId"), payload.optString("modelId"))
+                val providerId = payload.optString("providerId")
+                val modelId = payload.optString("modelId")
+                if (modelId == "@account" || modelId.isBlank()) {
+                    Quota.clearAccount(context, providerId)
+                }
+                if (modelId.isNotBlank() && modelId != "@account") {
+                    Quota.clear(context, providerId, modelId)
+                }
                 JSONObject().put("ok", true)
             }
             "chat.start" -> {
@@ -197,8 +204,35 @@ object Models {
 
     fun cached(context: Context): JSONArray {
         val f = file(context)
-        if (!f.exists()) return JSONArray()
-        return runCatching { JSONArray(f.readText()) }.getOrDefault(JSONArray())
+        val stored = if (!f.exists()) JSONArray() else
+            runCatching { JSONArray(f.readText()) }.getOrDefault(JSONArray())
+        return withFreeDefaults(context, stored)
+    }
+
+    /**
+     * Бесплатные провайдеры должны быть доступны сразу, без ключа и без сети:
+     * иначе при первом запуске список моделей пуст и выбрать нечего.
+     */
+    private fun withFreeDefaults(context: Context, stored: JSONArray): JSONArray {
+        if (stored.length() > 0) return stored
+        val out = JSONArray()
+        Providers.all(context)
+            .filter { !it.needsKey && it.id != "ollama" && it.id != "lmstudio" && it.id != "llamacpp" }
+            .forEach { provider ->
+                Providers.defaultModels(provider.id).forEach { model ->
+                    out.put(
+                        JSONObject()
+                            .put("id", model.id)
+                            .put("name", model.name)
+                            .put("provider", provider.id)
+                            .put("context", model.context)
+                            .put("reasoning", model.reasoning)
+                            .put("vision", model.vision)
+                            .put("free", true)
+                    )
+                }
+            }
+        return out
     }
 
     fun save(context: Context, models: JSONArray) {
@@ -216,9 +250,7 @@ object Models {
         val errors = JSONObject()
         val providers = Providers.all(context)
         for (provider in providers) {
-            if (provider.needsKey && !Secrets.hasKey(context, provider.id)) {
-                if (provider.id != "opencode") continue
-            }
+            if (provider.needsKey && !Secrets.hasKey(context, provider.id)) continue
             val models = runCatching { Providers.fetchModels(context, provider) }.getOrElse { emptyList() }
             if (models.isEmpty()) {
                 errors.put(provider.id, "нет моделей")
@@ -239,9 +271,31 @@ object Models {
             }
         }
         if (result.length() > 0) save(context, result)
+        val merged = result
+        // Гарантируем наличие бесплатных моделей даже если сеть отдала пустой список.
+        val known = HashSet<String>()
+        for (i in 0 until merged.length()) {
+            val m = merged.getJSONObject(i)
+            known.add(m.optString("provider") + "|" + m.optString("id"))
+        }
+        Providers.all(context).filter { !it.needsKey }.forEach { provider ->
+            Providers.defaultModels(provider.id).forEach { model ->
+                if (!known.contains(provider.id + "|" + model.id)) {
+                    merged.put(
+                        JSONObject()
+                            .put("id", model.id)
+                            .put("name", model.name)
+                            .put("provider", provider.id)
+                            .put("context", model.context)
+                            .put("reasoning", model.reasoning)
+                            .put("free", true)
+                    )
+                }
+            }
+        }
         return JSONObject()
             .put("ok", true)
-            .put("models", if (result.length() > 0) result else cached(context))
+            .put("models", if (merged.length() > 0) merged else cached(context))
             .put("errors", errors)
     }
 }

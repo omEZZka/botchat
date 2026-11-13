@@ -39,6 +39,28 @@ object Quota {
 
     private fun key(providerId: String, modelId: String) = "$providerId|$modelId"
 
+    private const val ACCOUNT_PREFIX = "@account"
+
+    /**
+     * Лимит на весь провайдер: запоминаем отдельной записью, чтобы не
+     * перебирать 80 бесплатных моделей, которые всё равно заблокированы.
+     */
+    @Synchronized
+    fun markAccountLimited(context: Context, providerId: String, retryAfterMs: Long) {
+        val data = load(context)
+        val wait = if (retryAfterMs > 0) retryAfterMs else 60_000L
+        val until = System.currentTimeMillis() + wait.coerceIn(5_000, 3_600_000)
+        data.put("$ACCOUNT_PREFIX|$providerId", until)
+        save(context, data)
+    }
+
+    fun accountRemaining(context: Context, providerId: String): Long {
+        val data = load(context)
+        val until = data.optLong("$ACCOUNT_PREFIX|$providerId", 0L)
+        val delta = until - System.currentTimeMillis()
+        return if (delta > 0) delta else 0L
+    }
+
     /** Запоминает, когда модель снова станет доступной. */
     @Synchronized
     fun markLimited(context: Context, providerId: String, modelId: String, retryAfterMs: Long) {
@@ -83,6 +105,13 @@ object Quota {
             if (until > now) out.put(k, until - now)
         }
         return JSONObject().put("ok", true).put("limited", out).put("ts", now)
+    }
+
+    @Synchronized
+    fun clearAccount(context: Context, providerId: String) {
+        val data = load(context)
+        data.remove("$ACCOUNT_PREFIX|$providerId")
+        save(context, data)
     }
 
     /**

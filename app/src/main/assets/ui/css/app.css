@@ -1338,3 +1338,14 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
 }
 .quota-row .quota-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quota-row .quota-wait { color: var(--warn); font-size: 12px; flex: 0 0 auto; }
+
+.model-group-label { display: flex; align-items: center; gap: 8px; }
+.quota-badge {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 7px;
+  background: rgba(240, 180, 41, 0.16);
+  color: var(--warn);
+  letter-spacing: 0;
+  text-transform: none;
+}

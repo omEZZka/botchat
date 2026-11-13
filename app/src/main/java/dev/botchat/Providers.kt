@@ -59,6 +59,8 @@ object Providers {
         Provider("ai21", "AI21", "https://api.ai21.com/studio/v1", "custom"),
         Provider("voyage", "Voyage AI (эмбеддинги)", "https://api.voyageai.com/v1", "custom"),
         Provider("huggingface", "Hugging Face Inference", "https://api-inference.huggingface.co/v1"),
+        Provider("pollinations", "Pollinations (free)", "https://text.pollinations.ai/openai", needsKey = false),
+        Provider("llm7", "LLM7 (free)", "https://api.llm7.io/v1", needsKey = false),
         Provider("ollama", "Ollama", "http://127.0.0.1:11434/v1", needsKey = false),
         Provider("lmstudio", "LM Studio", "http://127.0.0.1:1234/v1", needsKey = false),
         Provider("llamacpp", "llama.cpp server", "http://127.0.0.1:8080/v1", needsKey = false)
@@ -318,9 +320,22 @@ object Providers {
     fun defaultModels(providerId: String): List<ModelInfo> {
         return when (providerId) {
             "opencode" -> listOf(
-                ModelInfo("zen-free", "OpenCode Zen Free", 128000),
                 ModelInfo("big-pickle", "Big Pickle", 200000, reasoning = true),
-                ModelInfo("grok-code", "Grok Code", 256000, reasoning = true)
+                ModelInfo("mimo-v2.6-flash-free", "MiMo-V2.6-Flash Free", 128000, vision = true),
+                ModelInfo("deepseek-v4.1-flash-free", "DeepSeek V4.1 Flash Free", 1000000, reasoning = true),
+                ModelInfo("glm-5.3-flash-free", "GLM-5.3-Flash Free", 1000000, vision = true),
+                ModelInfo("minimax-m3.1-flash-free", "MiniMax M3.1 Flash Free", 200000),
+                ModelInfo("longcat-2.5-free", "LongCat 2.5 Free", 128000),
+                ModelInfo("nemotron-3.5-lightning-free", "Nemotron 3.5 Lightning Free", 128000, reasoning = true)
+            )
+            "pollinations" -> listOf(
+                ModelInfo("openai", "Pollinations OpenAI", 128000, reasoning = true),
+                ModelInfo("openai-fast", "Pollinations OpenAI Fast", 128000, reasoning = true),
+                ModelInfo("mistral", "Pollinations Mistral", 128000)
+            )
+            "llm7" -> listOf(
+                ModelInfo("codestral-latest", "LLM7 Codestral", 256000),
+                ModelInfo("mistral-Nemo-Instruct-2407", "LLM7 Mistral Nemo", 128000)
             )
             else -> emptyList()
         }

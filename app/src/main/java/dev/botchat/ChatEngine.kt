@@ -145,7 +145,23 @@ object ChatEngine {
         val ordered = Quota.order(context, candidates.map { it.first.id to it.second })
             .mapNotNull { pair -> candidates.firstOrNull { it.first.id == pair.first && it.second == pair.second } }
 
+        val skippedProviders = HashSet<String>()
+
         for ((candidateProvider, candidateModel) in ordered) {
+            if (skippedProviders.contains(candidateProvider.id)) continue
+            val accountWait = Quota.accountRemaining(context, candidateProvider.id)
+            if (accountWait > 0) {
+                skippedProviders.add(candidateProvider.id)
+                lastRetryAfter = maxOf(lastRetryAfter, accountWait)
+                lastError = "Лимит провайдера " + candidateProvider.name + " · ещё " +
+                    (accountWait / 1000) + " с"
+                emitNotice(
+                    host,
+                    requestId,
+                    candidateProvider.name + ": лимит на все модели, переключаюсь"
+                )
+                continue
+            }
             val knownWait = Quota.remaining(context, candidateProvider.id, candidateModel)
             if (knownWait > 0 && candidates.size > 1) {
                 // Модель недавно упёрлась в квоту — не тратим на неё попытку.
@@ -186,8 +202,25 @@ object ChatEngine {
                         break
                     }
                     lastError = outcome.error
-                    if (outcome.status == 429) {
+                    if (outcome.status == 429 || outcome.status == 402) {
                         lastRetryAfter = outcome.retryAfterMs
+                        if (outcome.scope == "account") {
+                            // Провайдер закрыл все бесплатные модели: нет смысла перебирать их.
+                            Quota.markAccountLimited(
+                                context,
+                                candidateProvider.id,
+                                if (outcome.retryAfterMs > 0) outcome.retryAfterMs else 600_000L
+                            )
+                            emitNotice(
+                                host,
+                                requestId,
+                                candidateProvider.name + ": бесплатный лимит исчерпан, " +
+                                    "продолжаю на другой бесплатной модели"
+                            )
+                            skippedProviders.add(candidateProvider.id)
+                            modelDone = true
+                            break
+                        }
                         Quota.markLimited(
                             context,
                             candidateProvider.id,
@@ -279,7 +312,8 @@ object ChatEngine {
         val retryable: Boolean,
         val status: Int,
         val error: String,
-        val retryAfterMs: Long = -1L
+        val retryAfterMs: Long = -1L,
+        val scope: String = "model"
     )
 
     private fun attempt(
@@ -324,9 +358,15 @@ object ChatEngine {
                 finished = true
             }
 
-            override fun onError(message: String, retryable: Boolean, status: Int, retryAfterMs: Long) {
+            override fun onError(
+                message: String,
+                retryable: Boolean,
+                status: Int,
+                retryAfterMs: Long,
+                scope: String
+            ) {
                 finished = true
-                failure = Outcome(false, retryable, status, message, retryAfterMs)
+                failure = Outcome(false, retryable, status, message, retryAfterMs, scope)
             }
         }
 

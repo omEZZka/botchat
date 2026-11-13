@@ -396,7 +396,7 @@ const Agent = (() => {
     }
     offDelta(); offTool(); offDone(); offError(); offNotice(); offModel();
 
-    if (lastError) throw new Error(lastError);
+    if (lastError && !buffer.trim() && !toolCalls.length) throw new Error(lastError);
     if (buffer.trim() || toolCalls.length) {
       await Store.updateMessage(chatId, message.id, { text: buffer.trim(), streaming: false }, { silent: true });
     }

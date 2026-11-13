@@ -39,7 +39,13 @@ object Net {
         fun onDelta(text: String) {}
         fun onToolDelta(index: Int, id: String?, name: String?, argsDelta: String?) {}
         fun onFinish(reason: String?) {}
-        fun onError(message: String, retryable: Boolean, status: Int, retryAfterMs: Long = -1L) {}
+        fun onError(
+            message: String,
+            retryable: Boolean,
+            status: Int,
+            retryAfterMs: Long = -1L,
+            scope: String = "model"
+        ) {}
     }
 
     class Handle internal constructor(private val stop: () -> Unit) {
@@ -81,7 +87,8 @@ object Net {
                                 res.code,
                                 friendly(res.code, text),
                                 res.code == 429 || res.code >= 500,
-                                retryAfterMs(res)
+                                retryAfterMs(res),
+                                quotaScope(res.code, text)
                             )
                         )
                     }
@@ -122,7 +129,8 @@ object Net {
                             friendly(res.code, err),
                             res.code == 429 || res.code >= 500,
                             res.code,
-                            retryAfterMs(res)
+                            retryAfterMs(res),
+                            quotaScope(res.code, err)
                         )
                         return@use
                     }
@@ -191,7 +199,15 @@ object Net {
             401, 403 -> "Ключ отклонён или нет доступа (HTTP $code)"
             404 -> "Модель или endpoint не найдены (HTTP 404)"
             413 -> "Слишком большой контекст (HTTP 413)"
-            429 -> "Квота исчерпана или лимит запросов (HTTP 429)"
+            429 -> {
+                val lower = body.lowercase()
+                if (lower.contains("freeusagelimiterror") || lower.contains("free usage limit")) {
+                    "Бесплатный лимит провайдера исчерпан (HTTP 429)"
+                } else {
+                    "Квота исчерпана или лимит запросов (HTTP 429)"
+                }
+            }
+            402 -> "Требуется оплата или подписка (HTTP 402)"
             in 500..599 -> "Провайдер недоступен (HTTP $code)"
             else -> if (detail.isNotBlank()) "HTTP $code: $detail" else "HTTP $code"
         }
@@ -230,11 +246,32 @@ object Net {
         return -1L
     }
 
+    /**
+     * Лимит бывает на модель и на весь аккаунт/провайдер.
+     * OpenCode Zen, например, блокирует все бесплатные модели сразу.
+     */
+    fun quotaScope(code: Int, body: String): String {
+        if (code != 429 && code != 402) return "model"
+        val lower = body.lowercase()
+        val accountMarkers = listOf(
+            "freeusagelimiterror",
+            "free usage limit",
+            "quota exceeded",
+            "insufficient_quota",
+            "billing",
+            "subscription",
+            "credit balance",
+            "credits"
+        )
+        return if (accountMarkers.any { lower.contains(it) }) "account" else "model"
+    }
+
     class NetException(
         val code: Int,
         override val message: String,
         val retryable: Boolean,
-        val retryAfterMs: Long = -1L
+        val retryAfterMs: Long = -1L,
+        val quotaScope: String = "model"
     ) : IOException(message)
 
     fun isOnline(context: Context): Boolean {

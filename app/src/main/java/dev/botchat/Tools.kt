@@ -400,7 +400,7 @@ object Tools {
             .put("ts", System.currentTimeMillis())
         item.put("chatId", args.optString("chatId"))
         item.put("provider", args.optString("provider", "opencode"))
-        item.put("model", args.optString("model", "zen-free"))
+        item.put("model", args.optString("model", "big-pickle"))
         SubAgents.enqueue(context, item)
         return JSONObject()
             .put("ok", true)
