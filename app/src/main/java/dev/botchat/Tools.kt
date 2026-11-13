@@ -244,7 +244,8 @@ object Tools {
                 input.read(buf)
                 String(buf, Charsets.UTF_8)
             }
-            val verified = f.isFile && size == content.toByteArray(Charsets.UTF_8).size
+            val expected = content.toByteArray(Charsets.UTF_8).size.toLong()
+            val verified = f.isFile && size == expected
             JSONObject()
                 .put("ok", verified)
                 .put("status", if (verified) "done" else "unverified")
