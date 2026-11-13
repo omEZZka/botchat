@@ -41,6 +41,9 @@ const Agent = (() => {
       Store.publishState();
       return;
     }
+    // Активная рабочая папка нужна и промпту, и инструментам.
+    const st = await Native.api('storage.info', { chatId });
+    if (st && st.ok) S.storageActive = st.active || '';
     const userMsg = await Store.addMessage(chatId, {
       role: 'user', kind: 'text', text: payload.text || '',
       attachments: payload.attachments || [], status: 'sending',
@@ -131,6 +134,7 @@ const Agent = (() => {
       Store.setAgent({ running: false, phase: 'idle', label: '', paused: false });
       await Store.updateMessage(chatId, assistantMsg.id, { streaming: false, status: 'done' }, { silent: true });
       await Store.touchChat(chatId, { status: 'idle' });
+      await clearPending(chatId);
       await autoTitle(chatId);
       AgentServiceKeepAlive(false, chatId);
       Bus.emit('render');
@@ -283,6 +287,8 @@ const Agent = (() => {
 
   const fail = async (chatId, message, err) => {
     const text = String(err && err.message ? err.message : err || 'Ошибка');
+    const lastUser = (Store.messages(chatId) || []).filter((m) => m.role === 'user').pop();
+    if (lastUser && lastUser.text) await rememberPending(chatId, lastUser.text);
     await Store.updateMessage(chatId, message.id, {
       streaming: false, error: text, status: 'error',
       text: (message.text || '') + '\n\n' + 'Не удалось получить ответ: ' + text,
@@ -326,8 +332,30 @@ const Agent = (() => {
     return null;
   };
 
+  /** Запоминает незавершённое действие, чтобы следующий запрос его продолжил. */
+  const rememberPending = async (chatId, text) => {
+    const chat = Store.getChat(chatId);
+    if (!chat) return;
+    await Store.touchChat(chatId, { pendingTask: (text || '').slice(0, 300) });
+  };
+
+  const clearPending = async (chatId) => {
+    await Store.touchChat(chatId, { pendingTask: '' });
+  };
+
+  const pendingTask = (chatId) => {
+    const chat = Store.getChat(chatId);
+    return (chat && chat.pendingTask) || '';
+  };
+
   const buildContext = (chatId, options) => {
     const chat = Store.getChat(chatId);
+    if (options && options.storage == null) {
+      options.storage = { active: S.storageActive || '' };
+    }
+    if (options && options.pendingTask == null) {
+      options.pendingTask = pendingTask(chatId);
+    }
     if (active && active.context && active.context.length > 0) {
       // Внутри агентского цикла контекст уже собран с tool_calls — берём его как есть.
       const system = systemPrompt(chat, options || {});
@@ -362,33 +390,71 @@ const Agent = (() => {
    * Так в обычном чате нет упоминания инструментов, а в агентском режиме
    * есть чёткое правило «сначала прочитай, потом меняй».
    */
+  /**
+   * Системная инструкция.
+   *
+   * Ключевые правила (по итогам реальных сбоев):
+   *  1) действие выполняется инструментом, а не описывается словами;
+   *  2) в ответе один достоверный статус: выполнено / не выполнено / ждёт подтверждения;
+   *  3) результат инструмента важнее догадок;
+   *  4) при сбое — «что просили → что помешало → что нужно от пользователя».
+   */
   const systemPrompt = (chat, options) => {
     const toolsAvailable = options.tools !== false && !options.planOnly;
-    const folder = chat.projectFolder || '';
+    const folder = chat.projectFolder || (options.storage && options.storage.active) || '';
     const parts = [];
 
     parts.push(
       'Ты — botCHAT, помощник в мессенджере на телефоне. ' +
-      'С тобой можно просто поговорить или поручить работу с проектом.'
+      'С тобой можно просто поговорить или поручить работу с файлами.'
     );
 
     parts.push([
       'Разговор:',
       '— отвечай на заданный вопрос, без вступлений и без списка «чем я могу помочь»;',
-      '— приветствие, вопрос о тебе, объяснение, мнение, пример кода — это обычный ответ, инструменты не нужны;',
+      '— приветствие, вопрос о тебе, объяснение, мнение — обычный ответ, инструменты не нужны;',
       '— пиши кратко, на языке пользователя; код — блоками с языком.',
     ].join('\n'));
 
     if (toolsAvailable) {
       parts.push([
-        'Работа с проектом:',
+        'Работа с файлами:',
         folder ? '— рабочая папка: ' + folder + ';' : '— рабочая папка чата;',
-        '— инструменты: read, write, edit, bash, grep, glob, list, webfetch, todo, task;',
-        '— вызывай инструмент только если без него не ответить: посмотреть файлы, изменить их, выполнить команду;',
-        '— сначала прочитай, потом меняй; содержимое файлов не угадывай;',
-        '— результат инструмента важнее догадок: если он расходится с ожиданием, опирайся на результат;',
-        '— хватит одного-двух вызовов; план на каждый шаг не нужен;',
-        '— ошибку инструмента объясни простыми словами и предложи следующий шаг.',
+        '— инструменты: list, read, write, edit, grep, glob, bash, webfetch, todo, task;',
+        '',
+        'Главное правило: если просят сделать действие — ВЫПОЛНИ ЕГО ИНСТРУМЕНТОМ.',
+        'Нельзя отвечать «файл создан» или «папка содержит…», если инструмент не вызывался.',
+        'Если инструмент вернул ошибку — не выдумывай результат и не подменяй его рассказом.',
+        '',
+        'Порядок работы:',
+        '1. Неясный путь — сначала list нужной папки, потом действие.',
+        '2. write: передай полный путь и содержимое. После записи проверь размер в ответе инструмента.',
+        '3. edit: сначала read, затем точный oldString из прочитанного текста.',
+        '4. Никогда не угадывай содержимое файла — читай его.',
+        '5. Результат инструмента важнее любых ожиданий: опирайся на поле output.',
+      ].join('\n'));
+
+      parts.push([
+        'Статус в ответе (обязательно одно из трёх):',
+        '— «Готово: …» + путь и размер, если инструмент вернул ok;',
+        '— «Ждёт подтверждения: …» если действие требует разрешения и пользователь ещё не ответил;',
+        '— «Не выполнено: …» если инструмент вернул ошибку.',
+        'Не смешивай статусы в одном ответе. Один ответ — один статус.',
+      ].join('\n'));
+
+      parts.push([
+        'Если действие невозможно, ответь по схеме:',
+        '1) Что просили (одна строка).',
+        '2) Что помешало (точная причина из инструмента).',
+        '3) Что нужно от пользователя (одно конкретное действие).',
+      ].join('\n'));
+
+      parts.push([
+        'Пути:',
+        '— «Downloads» / «Загрузки» = /storage/emulated/0/Download;',
+        '— «~» = корень памяти устройства;',
+        '— относительный путь считается от рабочей папки;',
+        '— если папка вне доступа, скажи об этом и подскажи открыть карточку чата → Рабочая папка.',
       ].join('\n'));
     }
 
@@ -396,22 +462,29 @@ const Agent = (() => {
       'Ограничения:',
       '— не выдумывай пути, имена файлов, команды и их вывод;',
       '— не пиши «сделал», если действие не выполнено;',
-      '— после ошибки не повторяй тот же вызов — измени подход;',
+      '— после ошибки не повторяй тот же вызов без изменений;',
       toolsAvailable
         ? '— запись, bash и сеть выполняй только после подтверждения пользователя.'
-        : '— если для ответа нужен доступ к файлам, скажи об этом прямо.',
+        : '— если нужен доступ к файлам, скажи об этом прямо.',
     ].join('\n'));
 
+    if (options.pendingTask) {
+      parts.push(
+        'Незавершённая задача из прошлого запроса: ' + options.pendingTask +
+        '. Если пользователь повторяет просьбу — продолжай её, а не начинай заново.'
+      );
+    }
+
     if (options.planOnly) {
-      parts.push('Режим планирования: опиши шаги словами, инструменты не вызывай.')
+      parts.push('Режим планирования: опиши шаги словами, инструменты не вызывай.');
     }
     if (options.tools === false && !options.planOnly) {
-      parts.push('Инструменты сейчас недоступны: ответь текстом, своими знаниями.')
+      parts.push('Инструменты сейчас недоступны: ответь текстом, своими знаниями.');
     }
     if (options.smallTalk) {
-      parts.push('Это обычная беседа: просто ответь на реплику.')
+      parts.push('Это обычная беседа: просто ответь на реплику.');
     }
-    return parts.join('\n\n')
+    return parts.join('\n\n');
   };
 
   /**
@@ -629,7 +702,9 @@ const Agent = (() => {
           output: 'Отклонено пользователем',
           state: { status: 'error', error: 'denied' },
         });
-        return { denied: true };
+        const lastUser = (Store.messages(chatId) || []).filter((m) => m.role === 'user').pop();
+        if (lastUser && lastUser.text) await rememberPending(chatId, lastUser.text);
+        return { denied: true, status: 'not_done' };
       }
       if (decision === 'always') {
         S.settings.trustChats = Array.from(new Set([...(S.settings.trustChats || []), chatId]));
@@ -746,6 +821,7 @@ const Agent = (() => {
   return {
     send, run, stop, togglePause, flushQueue, continueGeneration, regenerate,
     executeTool, cancelActive, contextUsage, isSmallTalk, needsTools, autoTitle,
+    rememberPending, clearPending, pendingTask,
     systemPrompt, buildContext,
     get active() { return active; },
   };

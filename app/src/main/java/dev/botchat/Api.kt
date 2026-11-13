@@ -54,6 +54,18 @@ object Api {
                 Secrets.wipe(context, payload.optString("providerId"))
                 JSONObject().put("ok", true)
             }
+            "storage.info" -> Storage.info(context, payload.optString("chatId"))
+            "storage.set" -> {
+                val chatId = payload.optString("chatId")
+                val scope = payload.optString("scope", "sandbox")
+                val path = payload.optString("path")
+                if (scope == "custom" && path.isNotBlank()) {
+                    Storage.ensureDir(context, chatId, path)
+                }
+                Storage.setScope(context, chatId, scope, path)
+                Storage.info(context, chatId)
+            }
+            "storage.requestAllFiles" -> Storage.requestAllFiles(context)
             "voice.start" -> Voice.start(context, payload.optString("chatId"))
             "voice.stop" -> Voice.stop()
             "voice.cancel" -> {

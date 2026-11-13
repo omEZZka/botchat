@@ -62,9 +62,11 @@ object Runtime {
         cwd: File,
         command: String,
         timeoutMs: Long = 60_000,
-        maxBytes: Int = 256 * 1024
+        maxBytes: Int = 256 * 1024,
+        workingRoot: File? = null
     ): ExecResult {
-        val cmd = shellCommand(context, cwd, command)
+        val mount = workingRoot ?: cwd
+        val cmd = shellCommand(context, mount, command)
             ?: return ExecResult("bash недоступен: rootfs не установлен", 127, false, 0)
         val started = System.currentTimeMillis()
         val pb = ProcessBuilder(cmd)

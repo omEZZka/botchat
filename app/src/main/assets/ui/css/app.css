@@ -1827,3 +1827,44 @@ mark { background: var(--acc); color: #0a0d13; border-radius: 3px; padding: 0 2p
 
 .chat-time { font-size: 11px; }
 .chat-preview { margin-top: 1px; }
+
+/* ---------- рабочая папка ---------- */
+
+.storage-box { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
+.storage-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  text-align: left;
+  position: relative;
+  transition: border-color var(--motion) ease, background var(--motion) ease;
+}
+.storage-choice.active { border-color: var(--acc); background: var(--acc-soft); }
+.storage-choice.disabled { opacity: 0.55; }
+.storage-choice .icon { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--acc); }
+.storage-title { font-size: 14px; font-weight: 550; color: var(--fg); }
+.storage-sub { font-size: 11.5px; color: var(--mut); }
+
+/* ---------- статус инструментов ---------- */
+
+.tool-state {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 7px;
+  flex: 0 0 auto;
+}
+.tool-state.ok { background: rgba(53, 192, 122, 0.16); color: var(--ok); }
+.tool-state.bad { background: rgba(239, 91, 91, 0.16); color: var(--danger); }
+.tool-hint {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px dashed color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--fg-2);
+  font-size: 12px;
+}

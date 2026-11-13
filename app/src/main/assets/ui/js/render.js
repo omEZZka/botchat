@@ -823,6 +823,11 @@ const Render = (() => {
       U.el('span', { class: 'tool-name', text: tool.name }),
       U.el('span', { class: 'tool-title', text: U.truncate(toolTitle(tool), 48) }),
       U.el('span', { class: 'tool-meta', text: toolSummary(tool) }),
+      status === 'error'
+        ? U.el('span', { class: 'tool-state bad', text: 'не выполнено' })
+        : status === 'completed'
+          ? U.el('span', { class: 'tool-state ok', text: 'готово' })
+          : null,
       status === 'running' ? U.el('span', { class: 'spinner tiny' }) : null,
     ]);
     card.appendChild(summary);
@@ -855,7 +860,13 @@ const Render = (() => {
         body.appendChild(U.el('pre', { class: 'tool-output' }, [U.el('code', { text: tool.output })]));
       }
     }
-    if (state.error) body.appendChild(U.el('div', { class: 'tool-error', text: state.error }));
+    if (state.error) {
+      const hint = tool.metadata && tool.metadata.hint;
+      body.appendChild(U.el('div', { class: 'tool-error' }, [
+        U.el('div', { text: state.error }),
+        hint ? U.el('div', { class: 'tool-hint', text: 'Что нужно: ' + hint }) : null,
+      ]));
+    }
     card.appendChild(body);
     card.addEventListener('toggle', () => {
       tool.uiOpen = card.open;

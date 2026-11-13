@@ -151,6 +151,76 @@ const Pickers = (() => {
       }),
     ]));
 
+    // --- рабочая папка ---
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Рабочая папка' }));
+    const storageBox = U.el('div', { class: 'storage-box' });
+    const customPathInput = U.el('input', {
+      class: 'field', placeholder: '/storage/emulated/0/Documents/project',
+    });
+    const renderStorage = async () => {
+      U.clear(storageBox);
+      const st = await Native.api('storage.info', { chatId: chat.id });
+      const scope = (st && st.scope) || 'sandbox';
+      const allFiles = !!(st && st.allFiles);
+      const choices = [
+        { id: 'sandbox', title: 'Песочница чата', sub: 'Изолированно, безопасно', enabled: true },
+        { id: 'device', title: 'Память устройства', sub: allFiles ? st.deviceRoot : 'Нужен доступ ко всем файлам', enabled: allFiles },
+        { id: 'custom', title: 'Своя папка', sub: allFiles ? 'Указать путь вручную' : 'Нужен доступ ко всем файлам', enabled: allFiles },
+      ];
+      choices.forEach((item) => {
+        const row = U.el('button', {
+          class: 'storage-choice' + (scope === item.id ? ' active' : '') + (item.enabled ? '' : ' disabled'),
+          type: 'button',
+          onclick: async () => {
+            if (!item.enabled) {
+              const res = await Native.api('storage.requestAllFiles');
+              if (res && res.opened) Render.toast('Разрешите доступ и вернитесь');
+              return;
+            }
+            if (item.id === 'custom') {
+              const path = customPathInput.value.trim();
+              if (!path) {
+                Render.toast('Укажите путь к папке');
+                return;
+              }
+              const res = await Native.api('storage.set', { chatId: chat.id, scope: 'custom', path });
+              if (!res || !res.ok) {
+                Render.toast((res && res.error) || 'Папка недоступна');
+                return;
+              }
+            } else {
+              await Native.api('storage.set', { chatId: chat.id, scope: item.id });
+            }
+            const info = await Native.api('storage.info', { chatId: chat.id });
+            if (info && info.ok) S.storageActive = info.active || '';
+            renderStorage();
+          },
+        }, [
+          U.el('span', { class: 'storage-title', text: item.title }),
+          U.el('span', { class: 'storage-sub', text: item.sub }),
+          scope === item.id ? Icons.make('check', 16) : null,
+        ]);
+        storageBox.appendChild(row);
+      });
+      customPathInput.value = (st && st.customPath) || '';
+      if (allFiles) {
+        storageBox.appendChild(customPathInput);
+        storageBox.appendChild(U.el('p', {
+          class: 'muted small',
+          text: 'Сейчас: ' + ((st && st.active) || ''),
+        }));
+      } else {
+        storageBox.appendChild(U.el('button', {
+          class: 'btn small full', text: 'Разрешить доступ ко всем файлам',
+          onclick: async () => {
+            const res = await Native.api('storage.requestAllFiles');
+            if (res && res.opened) Render.toast('Разрешите доступ и вернитесь');
+          },
+        }));
+      }
+    };
+    content.appendChild(storageBox);
+
     // --- действия ---
     content.appendChild(U.el('h3', { class: 'section-title', text: 'Действия' }));
     content.appendChild(U.el('div', { class: 'chat-card-actions' }, [
@@ -203,6 +273,7 @@ const Pickers = (() => {
     content.appendChild(save);
 
     renderPreview();
+    renderStorage();
     Render.openSheet({ title: 'Чат', content, full: true });
 
     // Если модель выбрали через шторку моделей, карточка открывается заново с новыми данными.

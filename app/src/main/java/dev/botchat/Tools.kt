@@ -127,13 +127,13 @@ object Tools {
         val root = chatRoot(context, chatId)
         return try {
             when (name) {
-                "read" -> read(root, args)
-                "write" -> write(root, args)
-                "edit" -> edit(root, args)
-                "bash" -> bash(context, root, args)
-                "grep" -> grep(root, args)
-                "glob" -> glob(root, args)
-                "list" -> list(root, args)
+                "read" -> read(context, chatId, args)
+                "write" -> write(context, chatId, args)
+                "edit" -> edit(context, chatId, args)
+                "bash" -> bash(context, chatId, root, args)
+                "grep" -> grep(context, chatId, args)
+                "glob" -> glob(context, chatId, args)
+                "list" -> list(context, chatId, args)
                 "webfetch" -> webfetch(args)
                 "todo" -> todo(args)
                 "task" -> task(context, args)
@@ -144,23 +144,61 @@ object Tools {
         }
     }
 
+    /**
+     * Путь в терминах пользователя: «Downloads», «~/Downloads», «/sdcard/Download».
+     * Все варианты приводятся к /storage/emulated/0/Download.
+     */
+    fun normalizeUserPath(context: Context, chatId: String, path: String): String {
+        val p = path.trim()
+        if (p.isEmpty()) return p
+        val lower = p.lowercase()
+        val downloads = listOf(
+            "downloads", "download", "загрузки", "~/downloads", "~/download",
+            "/sdcard/downloads", "/sdcard/download", "/storage/emulated/0/downloads",
+            "/storage/emulated/0/download"
+        )
+        if (downloads.contains(lower)) {
+            val target = java.io.File(Storage.deviceRoot(), "Download")
+            return target.absolutePath
+        }
+        if (lower.startsWith("~/")) {
+            return java.io.File(Storage.deviceRoot(), p.removePrefix("~/")).absolutePath
+        }
+        return p
+    }
+
+    /** Единый ответ об ошибке: причина + что сделать. */
+    private fun fail(reason: String, hint: String, scope: String = ""): JSONObject {
+        return JSONObject()
+            .put("ok", false)
+            .put("status", "not_done")
+            .put("error", reason)
+            .put("hint", hint)
+            .put("scope", scope)
+            .put("output", reason + (if (hint.isNotBlank()) "\nЧто нужно: " + hint else ""))
+    }
+
     fun chatRoot(context: Context, chatId: String): File {
         val safe = chatId.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "default" }
         return File(Profiles.root(context), safe).apply { mkdirs() }
     }
 
-    private fun resolve(root: File, path: String): File? {
-        val raw = if (path.isBlank() || path == "." || path == "/") root.absolutePath else path
-        val candidate = if (raw.startsWith("/")) File(raw) else File(root, raw)
-        val canonical = runCatching { candidate.canonicalFile }.getOrNull() ?: return null
-        val base = runCatching { root.canonicalFile }.getOrNull() ?: return null
-        if (canonical == base) return canonical
-        return if (canonical.path.startsWith(base.path + File.separator)) canonical else null
-    }
-
-    private fun read(root: File, args: JSONObject): JSONObject {
-        val f = resolve(root, args.optString("path")) ?: return err("путь вне проекта")
-        if (!f.isFile) return err("файл не найден")
+    private fun read(context: Context, chatId: String, args: JSONObject): JSONObject {
+        val rawPath = normalizeUserPath(context, chatId, args.optString("path"))
+        val f = Storage.resolve(context, chatId, rawPath)
+            ?: return fail(
+                "Путь «" + args.optString("path") + "» вне доступных папок.",
+                "Выберите рабочую папку в карточке чата или дайте доступ ко всем файлам."
+            )
+        if (!f.exists()) {
+            val parent = f.parentFile
+            val near = parent?.listFiles()?.take(8)?.joinToString(", ") { it.name } ?: ""
+            return fail(
+                "Файл не найден: " + f.absolutePath,
+                if (near.isNotBlank()) "В папке есть: " + near else "Проверьте путь через list."
+            )
+        }
+        if (!f.isFile) return fail("Это папка, а не файл: " + f.absolutePath, "Используйте list.")
         val bytes = ByteArray(minOf(f.length(), MAX_READ.toLong()).toInt())
         f.inputStream().use { input ->
             var offset = 0
@@ -174,53 +212,118 @@ object Tools {
         val lines = text.count { it == '\n' } + 1
         return JSONObject()
             .put("ok", true)
+            .put("status", "done")
             .put("output", text)
-            .put("metadata", JSONObject().put("lines", lines).put("path", f.absolutePath))
-    }
-
-    private fun write(root: File, args: JSONObject): JSONObject {
-        val f = resolve(root, args.optString("path")) ?: return err("путь вне проекта")
-        Checkpoints.snapshot(root, "write: " + f.name)
-        f.parentFile?.mkdirs()
-        val content = args.optString("content")
-        val tmp = File(f.parentFile, ".${f.name}.tmp")
-        tmp.writeText(content)
-        Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        return JSONObject()
-            .put("ok", true)
-            .put("output", "Записано ${content.length} байт")
-            .put("metadata", JSONObject().put("bytes", content.length))
-    }
-
-    private fun edit(root: File, args: JSONObject): JSONObject {
-        val f = resolve(root, args.optString("path")) ?: return err("путь вне проекта")
-        if (!f.isFile) return err("файл не найден")
-        val old = args.optString("oldString")
-        val new = args.optString("newString")
-        if (old.isEmpty()) return err("пустой oldString")
-        val text = f.readText()
-        if (!text.contains(old)) return err("фрагмент не найден")
-        Checkpoints.snapshot(root, "edit: " + f.name)
-        val replaced = text.replaceFirst(old, new)
-        val tmp = File(f.parentFile, ".${f.name}.tmp")
-        tmp.writeText(replaced)
-        Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        val beforeLines = text.lines().size
-        val afterLines = replaced.lines().size
-        val added = countAdded(old, new)
-        val removed = countRemoved(old, new)
-        return JSONObject()
-            .put("ok", true)
-            .put("output", "Изменено: +${added}/-${removed}")
             .put(
                 "metadata",
                 JSONObject()
-                    .put("added", added)
-                    .put("removed", removed)
-                    .put("diff", makeDiff(old, new))
-                    .put("linesBefore", beforeLines)
-                    .put("linesAfter", afterLines)
+                    .put("lines", lines)
+                    .put("path", f.absolutePath)
+                    .put("bytes", f.length())
             )
+    }
+
+    private fun write(context: Context, chatId: String, args: JSONObject): JSONObject {
+        val rawPath = normalizeUserPath(context, chatId, args.optString("path"))
+        val f = Storage.resolve(context, chatId, rawPath)
+            ?: return fail(
+                "Нельзя писать в «" + args.optString("path") + "»: путь вне доступных папок.",
+                "Откройте карточку чата и выберите папку (или разрешите доступ ко всем файлам)."
+            )
+        val content = args.optString("content")
+        f.parentFile?.mkdirs()
+        Checkpoints.snapshot(chatRoot(context, chatId), "write: " + f.name)
+        val tmp = File(f.parentFile, ".${f.name}.tmp")
+        return try {
+            tmp.writeText(content)
+            Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            // Верификация: перечитываем файл, а не верим на слово.
+            val size = f.length()
+            val head = f.inputStream().use { input ->
+                val buf = ByteArray(minOf(size, 256L).toInt())
+                input.read(buf)
+                String(buf, Charsets.UTF_8)
+            }
+            val verified = f.isFile && size == content.toByteArray(Charsets.UTF_8).size
+            JSONObject()
+                .put("ok", verified)
+                .put("status", if (verified) "done" else "unverified")
+                .put("output", if (verified)
+                    "Записано: " + f.absolutePath + " (" + size + " байт, проверено чтением)"
+                else
+                    "Файл записан, но размер не совпал: " + f.absolutePath)
+                .put(
+                    "metadata",
+                    JSONObject()
+                        .put("path", f.absolutePath)
+                        .put("bytes", size)
+                        .put("verified", verified)
+                        .put("preview", head.take(80))
+                )
+        } catch (t: Throwable) {
+            fail(
+                "Не удалось записать " + f.absolutePath + ": " + (t.message ?: "ошибка доступа"),
+                "Проверьте, что папка доступна для записи, или выберите другую в карточке чата."
+            )
+        } finally {
+            runCatching { tmp.delete() }
+        }
+    }
+
+    private fun edit(context: Context, chatId: String, args: JSONObject): JSONObject {
+        val rawPath = normalizeUserPath(context, chatId, args.optString("path"))
+        val f = Storage.resolve(context, chatId, rawPath)
+            ?: return fail(
+                "Нельзя править «" + args.optString("path") + "»: путь вне доступных папок.",
+                "Выберите рабочую папку в карточке чата."
+            )
+        if (!f.isFile) return fail("Файл не найден: " + f.absolutePath, "Сначала прочитайте файл через read.")
+        val old = args.optString("oldString")
+        val new = args.optString("newString")
+        if (old.isEmpty()) return fail("Пустой oldString.", "Передайте точный фрагмент для замены.")
+        val text = f.readText()
+        if (!text.contains(old)) {
+            return fail(
+                "Фрагмент не найден в " + f.name + ".",
+                "Прочитайте файл заново: содержимое могло измениться."
+            )
+        }
+        Checkpoints.snapshot(chatRoot(context, chatId), "edit: " + f.name)
+        val replaced = text.replaceFirst(old, new)
+        val tmp = File(f.parentFile, ".${f.name}.tmp")
+        return try {
+            tmp.writeText(replaced)
+            Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            val after = f.readText()
+            val applied = after.contains(new) && after != text
+            val added = countAdded(old, new)
+            val removed = countRemoved(old, new)
+            JSONObject()
+                .put("ok", applied)
+                .put("status", if (applied) "done" else "unverified")
+                .put("output", if (applied)
+                    "Изменено: +" + added + "/-" + removed + " в " + f.absolutePath
+                else
+                    "Файл изменён, но новая строка не найдена при проверке.")
+                .put(
+                    "metadata",
+                    JSONObject()
+                        .put("added", added)
+                        .put("removed", removed)
+                        .put("diff", makeDiff(old, new))
+                        .put("path", f.absolutePath)
+                        .put("verified", applied)
+                        .put("linesBefore", text.lines().size)
+                        .put("linesAfter", after.lines().size)
+                )
+        } catch (t: Throwable) {
+            fail(
+                "Не удалось изменить " + f.absolutePath + ": " + (t.message ?: "ошибка"),
+                "Проверьте права на папку."
+            )
+        } finally {
+            runCatching { tmp.delete() }
+        }
     }
 
     private fun countAdded(old: String, new: String): Int {
@@ -253,19 +356,24 @@ object Tools {
         return sb.toString()
     }
 
-    private fun bash(context: Context, root: File, args: JSONObject): JSONObject {
+    private fun bash(context: Context, chatId: String, root: File, args: JSONObject): JSONObject {
         val command = args.optString("command")
-        if (command.isBlank()) return err("пустая команда")
+        if (command.isBlank()) return fail("Пустая команда.", "Передайте команду для bash.")
         if (!Runtime.bashAvailable()) {
-            return JSONObject()
-                .put("ok", false)
-                .put("error", "bash недоступен: rootfs не установлен")
-                .put("output", "rootfs не установлен. Доступны остальные инструменты.")
+            return fail(
+                "bash недоступен: rootfs не установлен.",
+                "Установите rootfs в Файлы → Терминал. Остальные инструменты работают."
+            )
         }
-        val result = Runtime.exec(context, root, command, 60_000, MAX_OUTPUT)
+        // В контейнер монтируется активная рабочая папка: она видна как /workspace.
+        val dir = Storage.activeRoot(context, chatId)
+        val result = Runtime.exec(context, root, command, 60_000, MAX_OUTPUT, workingRoot = dir)
+        val ok = result.exit == 0
         return JSONObject()
-            .put("ok", result.exit == 0)
+            .put("ok", ok)
+            .put("status", if (ok) "done" else "not_done")
             .put("output", result.output)
+            .put("error", if (ok) "" else "команда завершилась с кодом " + result.exit)
             .put(
                 "metadata",
                 JSONObject()
@@ -275,14 +383,17 @@ object Tools {
             )
     }
 
-    private fun grep(root: File, args: JSONObject): JSONObject {
+    private fun grep(context: Context, chatId: String, args: JSONObject): JSONObject {
         val pattern = args.optString("pattern")
-        if (pattern.isBlank()) return err("пустой pattern")
+        if (pattern.isBlank()) return fail("Пустой pattern.", "Передайте регулярное выражение.")
         val regex = runCatching { Regex(pattern, RegexOption.IGNORE_CASE) }.getOrNull()
-            ?: return err("некорректное выражение")
+            ?: return fail("Некорректное выражение.", "Проверьте синтаксис регулярного выражения.")
+        val root = Storage.resolve(context, chatId, normalizeUserPath(context, chatId, args.optString("path")))
+            ?: Storage.activeRoot(context, chatId)
+        if (!root.isDirectory) return fail("Нет папки для поиска.", "Укажите существующий путь.")
         val hits = ArrayList<String>()
         var count = 0
-        root.walkTopDown().onEnter { !it.name.startsWith(".") }.forEach { f ->
+        root.walkTopDown().onEnter { !it.name.startsWith(".") && it.length() < 20_000_000 }.forEach { f ->
             if (!f.isFile || f.length() > 512 * 1024 || hits.size >= 200) return@forEach
             val name = f.name.lowercase()
             if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".zip") || name.endsWith(".apk")) return@forEach
@@ -302,13 +413,16 @@ object Tools {
         }
         return JSONObject()
             .put("ok", true)
+            .put("status", "done")
             .put("output", if (hits.isEmpty()) "Совпадений нет" else hits.joinToString("\n"))
-            .put("metadata", JSONObject().put("matches", count))
+            .put("metadata", JSONObject().put("matches", count).put("root", root.absolutePath))
     }
 
-    private fun glob(root: File, args: JSONObject): JSONObject {
+    private fun glob(context: Context, chatId: String, args: JSONObject): JSONObject {
         val pattern = args.optString("pattern").ifBlank { "**/*" }
         val regex = globToRegex(pattern)
+        val root = Storage.resolve(context, chatId, normalizeUserPath(context, chatId, args.optString("path")))
+            ?: Storage.activeRoot(context, chatId)
         val files = ArrayList<String>()
         root.walkTopDown().onEnter { !it.name.startsWith(".") }.forEach { f ->
             if (!f.isFile) return@forEach
@@ -318,8 +432,9 @@ object Tools {
         val top = files.sorted().take(300)
         return JSONObject()
             .put("ok", true)
+            .put("status", "done")
             .put("output", if (top.isEmpty()) "Файлов нет" else top.joinToString("\n"))
-            .put("metadata", JSONObject().put("files", files.size))
+            .put("metadata", JSONObject().put("files", files.size).put("root", root.absolutePath))
     }
 
     private fun globToRegex(pattern: String): Regex {
@@ -344,15 +459,39 @@ object Tools {
         return Regex(sb.toString())
     }
 
-    private fun list(root: File, args: JSONObject): JSONObject {
-        val dir = resolve(root, args.optString("path")) ?: return err("путь вне проекта")
-        if (!dir.isDirectory) return err("не папка")
-        val items = dir.listFiles()?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })) ?: emptyList()
-        val lines = items.map { (if (it.isDirectory) "d " else "f ") + it.name + if (it.isDirectory) "/" else " (${it.length()} Б)" }
+    private fun list(context: Context, chatId: String, args: JSONObject): JSONObject {
+        val rawPath = normalizeUserPath(context, chatId, args.optString("path"))
+        val dir = Storage.resolve(context, chatId, rawPath)
+            ?: return fail(
+                "Папка «" + args.optString("path").ifBlank { "." } + "» вне доступных.",
+                "Откройте карточку чата и выберите рабочую папку."
+            )
+        if (!dir.isDirectory) {
+            return fail("Это файл, а не папка: " + dir.absolutePath, "Для чтения используйте read.")
+        }
+        val all = dir.listFiles()
+        if (all == null) {
+            return fail(
+                "Нет доступа к папке " + dir.absolutePath,
+                "Разрешите доступ ко всем файлам в карточке чата."
+            )
+        }
+        val items = all.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+        val lines = items.take(120).map {
+            (if (it.isDirectory) "d " else "f ") + it.name +
+                if (it.isDirectory) "/" else " (" + it.length() + " Б)"
+        }
         return JSONObject()
             .put("ok", true)
+            .put("status", "done")
             .put("output", lines.joinToString("\n").ifBlank { "Папка пуста" })
-            .put("metadata", JSONObject().put("entries", items.size))
+            .put(
+                "metadata",
+                JSONObject()
+                    .put("entries", items.size)
+                    .put("path", dir.absolutePath)
+                    .put("truncated", items.size > 120)
+            )
     }
 
     private fun webfetch(args: JSONObject): JSONObject {
@@ -408,6 +547,9 @@ object Tools {
             .put("task", item)
     }
 
-    private fun err(message: String): JSONObject =
-        JSONObject().put("ok", false).put("error", message)
+    private fun err(message: String): JSONObject = JSONObject()
+        .put("ok", false)
+        .put("status", "not_done")
+        .put("error", message)
+        .put("output", message)
 }
