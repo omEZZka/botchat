@@ -229,7 +229,7 @@ const Render = (() => {
       }, [Icons.make(tab.icon, 22), U.el('span', { text: tab.label })]);
       bar.appendChild(btn);
     });
-    bar.hidden = S.screen === 'chat' && S.route !== 'chats';
+    bar.hidden = S.screen === 'chat';
   };
 
   const chatStatusBadges = (chat) => {
