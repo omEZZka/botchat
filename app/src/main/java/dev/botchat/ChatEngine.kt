@@ -24,6 +24,9 @@ object ChatEngine {
     /** Сколько всего ждать перегрузку канала, прежде чем показать ошибку. */
     private const val RETRY_BUDGET_MS = 75_000L
 
+    /** Как часто отправлять накопленный текст в UI. */
+    private const val FLUSH_MS = 60L
+
 
 
     fun start(context: Context, payload: JSONObject): JSONObject {
@@ -175,8 +178,10 @@ object ChatEngine {
                     }
                     if (exhaustedKeys.any { it != null && it == key }) continue
                     current = Triple(candidateProvider, candidateModel, key)
-                    // Не долбим провайдера: общий шлюз частоты для всех запросов.
-                    if (!Throttle.acquire(candidateProvider.id) { run.cancelled.get() }) return
+                    // Шлюз частоты нужен только для повторов: первая попытка идёт сразу.
+                    if (wave > 0 || !exhaustedKeys.isEmpty()) {
+                        if (!Throttle.acquire(candidateProvider.id) { run.cancelled.get() }) return
+                    }
                     val outcome = attempt(
                         context, host, run, candidateProvider, key, requestId, system, messages,
                         toolsEnabled, planOnly, candidateModel
@@ -283,8 +288,8 @@ object ChatEngine {
     private fun quotaWait(retryAfterMs: Long, wave: Int): Long {
         // Провайдер просит «5–10 секунд»: берём верхнюю границу и растём дальше.
         val hinted = if (retryAfterMs > 0) (retryAfterMs * 3 / 2) else 0L
-        val backoff = 5_000L * wave
-        return maxOf(hinted, backoff).coerceIn(3_000, 25_000)
+        val backoff = 2_500L * wave
+        return maxOf(hinted, backoff).coerceIn(1_500, 20_000)
     }
 
     private fun sleepCancellable(run: Run, ms: Long): Boolean {
@@ -347,18 +352,34 @@ object ChatEngine {
         val cancelled = AtomicBoolean(false)
         val toolAcc = LinkedHashMap<Int, ToolAcc>()
         val buffer = StringBuilder()
+        val pending = StringBuilder()
+        var lastFlush = System.currentTimeMillis()
         var finished = false
         var failure: Outcome? = null
+
+        fun flush() {
+            if (pending.isEmpty()) return
+            val chunk = pending.toString()
+            pending.setLength(0)
+            runCatching {
+                host.emit(
+                    "llm.delta",
+                    JSONObject().put("requestId", requestId).put("text", chunk)
+                )
+            }
+        }
 
         val callback = object : Net.Callback {
             override fun onDelta(text: String) {
                 if (text.isEmpty()) return
                 buffer.append(text)
-                runCatching {
-                    host.emit(
-                        "llm.delta",
-                        JSONObject().put("requestId", requestId).put("text", text)
-                    )
+                pending.append(text)
+                // Батчинг: один вызов моста на пачку чанков заметно быстрее,
+                // чем событие на каждый токен.
+                val now = System.currentTimeMillis()
+                if (now - lastFlush >= FLUSH_MS) {
+                    lastFlush = now
+                    flush()
                 }
             }
 
@@ -443,7 +464,11 @@ object ChatEngine {
             run.handle?.cancel()
             return Outcome(false, true, 0, "Превышено время ожидания ответа")
         }
-        failure?.let { return it }
+        flush()
+        failure?.let {
+            runCatching { host.emit("llm.stop", JSONObject().put("requestId", requestId)) }
+            return it
+        }
 
         val calls = toolAcc.values.filter { it.name.isNotBlank() }.map { acc ->
             JSONObject()
@@ -459,6 +484,7 @@ object ChatEngine {
                 )
             }
         }
+        runCatching { host.emit("llm.stop", JSONObject().put("requestId", requestId)) }
         runCatching {
             host.emit("llm.done", JSONObject().put("requestId", requestId))
         }

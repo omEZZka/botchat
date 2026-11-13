@@ -484,7 +484,11 @@ const Render = (() => {
     } else {
       chatViewEl = view.querySelector('.chat-screen');
       const sub = U.$('#chat-sub');
-      if (sub) sub.textContent = chatSub(chat);
+      if (sub) {
+        const busy = S.agent.running && S.agent.chatId === chat.id;
+        sub.textContent = busy ? 'печатает…' : chatSub(chat);
+        sub.classList.toggle('busy', !!busy);
+      }
     }
     renderMessages(list, isNewChat || list.length !== lastMessageCount);
     renderProgress();
@@ -1098,6 +1102,13 @@ const Render = (() => {
       renderProgress();
       renderTabbar();
       renderPending();
+      const sub = U.$('#chat-sub');
+      const chat = Store.getChat(S.chatId);
+      if (sub && chat) {
+        const busy = S.agent.running && S.agent.chatId === chat.id;
+        sub.textContent = busy ? 'печатает…' : chatSub(chat);
+        sub.classList.toggle('busy', !!busy);
+      }
     });
     Bus.on('permission:changed', () => renderPending());
     Bus.on('message:updated', ({ chatId, message }) => {

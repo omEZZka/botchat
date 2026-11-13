@@ -430,8 +430,12 @@ const Agent = (() => {
       if (last) last.images = images;
     }
 
+    let sawDelta = false;
+    let lastActivityAt = Date.now();
     const offDelta = Native.on('llm.delta', (payload) => {
       if (!payload || payload.requestId !== requestId) return;
+      sawDelta = true;
+      lastActivityAt = Date.now();
       buffer += payload.text || '';
       ChatStream.update(chatId, message.id, buffer);
     });
@@ -440,6 +444,10 @@ const Agent = (() => {
       toolCalls = payload.calls || [];
     });
     const offDone = Native.on('llm.done', (payload) => {
+      if (!payload || payload.requestId !== requestId) return;
+      finished = true;
+    });
+    const offStop = Native.on('llm.stop', (payload) => {
       if (!payload || payload.requestId !== requestId) return;
       finished = true;
     });
@@ -461,6 +469,17 @@ const Agent = (() => {
     });
 
     let lastError = null;
+    ChatStream.status(chatId, message.id, 'Думает…');
+    const stalledTimer = setInterval(() => {
+      if (finished) return;
+      const idle = Date.now() - lastActivityAt;
+      if (idle > 20000) {
+        ChatStream.status(chatId, message.id, 'Долго не отвечает (' + Math.round(idle / 1000) + ' с)…');
+      } else if (sawDelta) {
+        ChatStream.status(chatId, message.id, 'Отвечает…');
+      }
+    }, 1000);
+
     const res = await Native.api('chat.start', {
       requestId,
       chatId,
@@ -488,7 +507,9 @@ const Agent = (() => {
       }
       await U.sleep(120);
     }
-    offDelta(); offTool(); offDone(); offError(); offNotice(); offModel();
+    clearInterval(stalledTimer);
+    ChatStream.status(chatId, message.id, '');
+    offDelta(); offTool(); offDone(); offError(); offNotice(); offModel(); offStop();
 
     if (lastError && !buffer.trim() && !toolCalls.length) throw new Error(lastError);
     if (buffer.trim() || toolCalls.length) {

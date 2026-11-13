@@ -293,6 +293,26 @@ const ChatStream = (() => {
     box.textContent = text;
   };
 
+  const status = (chatId, messageId, text) => {
+    const node = U.$('[data-msg="' + messageId + '"]');
+    if (!node) {
+      if (text) Bus.emit('render');
+      return;
+    }
+    const bubble = node.querySelector('.bubble');
+    if (!bubble) return;
+    let box = bubble.querySelector('.stream-status');
+    if (!text) {
+      if (box) box.remove();
+      return;
+    }
+    if (!box) {
+      box = U.el('div', { class: 'stream-status' });
+      bubble.appendChild(box);
+    }
+    box.textContent = text;
+  };
+
   const switched = (chatId, messageId, label) => {
     const node = U.$('[data-msg="' + messageId + '"]');
     if (!node) return;
@@ -306,7 +326,7 @@ const ChatStream = (() => {
     box.textContent = 'Продолжено на ' + label;
   };
 
-  return { update, notice, switched };
+  return { update, notice, switched, status };
 })();
 
 window.Composer = Composer;
