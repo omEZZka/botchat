@@ -208,8 +208,26 @@ const ProvidersUI = (() => {
     }
     content.appendChild(U.el('p', {
       class: 'muted small',
-      text: 'Проверка — короткий реальный запрос к каждой модели. Лимит запоминается на несколько минут.',
+      text: 'Проверка — короткий реальный запрос к каждой модели. Ограничение по частоте запоминается на минуту.',
     }));
+    if (rejected.length) {
+      content.appendChild(U.el('button', {
+        class: 'btn small', text: 'Показать детали ошибок',
+        onclick: async () => {
+          const details = rejected
+            .filter((item) => item.detail)
+            .map((item) => item.id + ' [' + (item.code || '—') + '] ' + item.detail)
+            .join('\n\n');
+          Render.openSheet({
+            title: 'Ответ провайдера',
+            content: U.el('pre', {
+              class: 'tool-output',
+              text: details || 'Провайдер не вернул тело ошибки',
+            }),
+          });
+        },
+      }));
+    }
     Render.openSheet({ title: provider.name, content });
   };
 
@@ -290,51 +308,58 @@ const ProvidersUI = (() => {
       }
     };
 
+    let checking = false;
+
     const probeButton = U.el('button', {
       class: 'btn', text: 'Проверить модели',
       onclick: async () => {
+        if (checking) return;
         const baseUrl = fields.baseUrl.value.trim();
         if (!baseUrl) {
           Render.toast('Укажите Base URL');
           return;
         }
-        const key = fields.key.value.trim();
         const id = fields.id.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
         if (!id) {
           Render.toast('Укажите ID провайдера');
           return;
         }
-        probeButton.disabled = true;
-        U.clear(probe);
-        probe.appendChild(U.el('div', { class: 'probe-row' }, [
-          U.el('span', { class: 'spinner tiny' }),
-          U.el('span', { text: 'Проверяю модели коротким запросом…' }),
-        ]));
+        const key = fields.key.value.trim();
+        const headers = U.safeJson(fields.headers.value || '{}', {});
 
-        // Сохраняем провайдера во временном виде, чтобы проверка шла по реальным ключам/заголовкам.
+        checking = true;
+        probeButton.disabled = true;
+        probeButton.textContent = 'Проверяю…';
+        U.clear(probe);
+        const progress = U.el('div', { class: 'probe-row' }, [
+          U.el('span', { class: 'spinner tiny' }),
+          U.el('span', { text: 'Получаю список моделей…' }),
+        ]);
+        probe.appendChild(progress);
+
         const saved = await Native.api('providers.add', {
           id, name: fields.name.value.trim() || id, baseUrl,
-          apiType: typeSelect.value,
-          headers: U.safeJson(fields.headers.value || '{}', {}),
-          key,
-          models: [],
+          apiType: typeSelect.value, headers, key, models: [],
         });
         if (!saved || !saved.ok) {
+          checking = false;
           probeButton.disabled = false;
+          probeButton.textContent = 'Проверить модели';
           U.clear(probe);
           probe.appendChild(U.el('p', {
-            class: 'muted small', text: (saved && saved.error) || 'Не удалось сохранить провайдера для проверки',
+            class: 'muted small', text: (saved && saved.error) || 'Не удалось сохранить провайдера',
           }));
           return;
         }
 
         const list = await Native.api('providers.probe', {
-          baseUrl, apiType: typeSelect.value, key,
-          headers: U.safeJson(fields.headers.value || '{}', {}),
+          baseUrl, apiType: typeSelect.value, key, headers,
         });
         const ids = (list && list.ok && (list.models || []).map((m) => m.id)) || [];
         if (!ids.length) {
+          checking = false;
           probeButton.disabled = false;
+          probeButton.textContent = 'Проверить модели';
           U.clear(probe);
           probe.appendChild(U.el('p', {
             class: 'muted small',
@@ -343,16 +368,57 @@ const ProvidersUI = (() => {
           return;
         }
 
-        const res = await Native.api('providers.verify', { providerId: id, models: ids });
-        probeButton.disabled = false;
-        if (!res || !res.ok) {
-          U.clear(probe);
-          probe.appendChild(U.el('p', {
-            class: 'muted small', text: (res && res.error) || 'Проверка не удалась',
-          }));
-          return;
+        // Проверяем последовательно, по одной модели: параллельные запросы
+        // сами приводят к 429 и рабочий ключ выглядит исчерпанным.
+        const working = [];
+        const rejected = [];
+        U.clear(probe);
+        const counter = U.el('span', { class: 'muted small', text: '0 из ' + ids.length });
+        probe.appendChild(U.el('div', { class: 'verify-summary' }, [
+          U.el('span', { class: 'verify-ok', text: 'Проверка…' }),
+          counter,
+        ]));
+        const rows = U.el('div', { class: 'verify-list' });
+        probe.appendChild(rows);
+
+        for (let i = 0; i < ids.length; i += 1) {
+          const modelId = ids[i];
+          const row = U.el('div', { class: 'probe-model pending' }, [
+            U.el('span', { class: 'spinner tiny' }),
+            U.el('span', { class: 'probe-name', text: modelId }),
+          ]);
+          rows.appendChild(row);
+          const single = await Native.api('providers.verify', {
+            providerId: id,
+            models: [modelId],
+          });
+          const item = (single && single.ok && (single.rejected || [])[0]) || null;
+          const ok = !!(single && single.ok && (single.working || []).length);
+          if (ok) {
+            working.push(modelId);
+            U.clear(row);
+            row.className = 'probe-model ok';
+            row.appendChild(U.el('span', { class: 'verify-dot ok' }));
+            row.appendChild(U.el('span', { class: 'probe-name', text: modelId }));
+          } else {
+            const reason = item ? item.reason : 'error';
+            const code = item ? item.code : 0;
+            rejected.push({ id: modelId, reason, code });
+            U.clear(row);
+            row.className = 'probe-model bad';
+            row.appendChild(U.el('span', { class: 'verify-dot bad' }));
+            row.appendChild(U.el('span', { class: 'probe-name', text: modelId }));
+            row.appendChild(U.el('span', {
+              class: 'probe-reason', text: reasonText(reason, code),
+            }));
+          }
+          counter.textContent = (i + 1) + ' из ' + ids.length;
         }
-        renderReport(res.working || [], res.rejected || [], res.total || ids.length);
+
+        checking = false;
+        probeButton.disabled = false;
+        probeButton.textContent = 'Проверить модели';
+        renderReport(working, rejected, ids.length);
         await load();
       },
     });

@@ -54,6 +54,32 @@ object Api {
                 JSONObject().put("ok", true)
             }
             "models.refresh" -> Models.refresh(context)
+            "providers.diagnose" -> {
+                val providerId = payload.optString("providerId")
+                val modelId = payload.optString("modelId")
+                val provider = Providers.byId(context, providerId)
+                    ?: return JSONObject().put("ok", false).put("error", "Провайдер не найден")
+                val key = Secrets.activeKey(context, providerId)
+                val headers = Providers.headers(provider, key).toMutableMap()
+                headers["Accept"] = "application/json"
+                Providers.customHeaders(context, providerId).forEach { (k2, v) -> headers[k2] = v }
+                val safe = JSONObject()
+                headers.forEach { (k2, v) ->
+                    safe.put(k2, if (k2.equals("Authorization", true) || k2.lowercase().contains("key"))
+                        "***" else v)
+                }
+                JSONObject()
+                    .put("ok", true)
+                    .put("provider", providerId)
+                    .put("apiType", provider.apiType)
+                    .put("baseUrl", provider.baseUrl)
+                    .put("model", modelId)
+                    .put("hasKey", key != null)
+                    .put("headers", safe)
+                    .put("url", provider.baseUrl + if (provider.apiType == "anthropic") "/messages"
+                        else if (provider.apiType == "gemini") "/models/$modelId:generateContent"
+                        else "/chat/completions")
+            }
             "providers.verify" -> {
                 Models.verify(context, payload.optString("providerId"), payload.optJSONArray("models"))
             }
@@ -312,6 +338,7 @@ object Models {
      * Полная проверка: список моделей провайдера + короткий запрос к каждой.
      * Возвращает только рабочие модели и отчёт по остальным.
      */
+    @Synchronized
     fun verify(context: Context, providerId: String, requested: JSONArray?): JSONObject {
         val provider = Providers.byId(context, providerId)
             ?: return JSONObject().put("ok", false).put("error", "Провайдер не найден")
@@ -332,7 +359,7 @@ object Models {
             return JSONObject().put("ok", false).put("error", "Провайдер не вернул список моделей")
         }
 
-        val report = ModelCheck.checkProvider(context, provider, candidates.toList()) { _, _ -> }
+        val report = ModelCheck.checkProvider(context, provider, candidates.toList()) { _, _, _, _ -> }
         val results = report.optJSONArray("results") ?: JSONArray()
 
         val working = JSONArray()
@@ -364,6 +391,7 @@ object Models {
                         .put("id", id)
                         .put("reason", item.optString("reason"))
                         .put("code", item.optInt("code"))
+                        .put("detail", item.optString("detail").take(240))
                 )
             }
         }

@@ -5,97 +5,110 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Реальная проверка моделей: короткий запрос к каждой модели.
+ * Проверка моделей коротким запросом.
  *
- * Модель попадает в список только если ответила. Ошибки квоты/лимита/доступа
- * помечаются и запоминаются в Quota, чтобы их не предлагать и не тратить время.
+ * Важно: проверка идёт строго последовательно с паузами. Параллельный «залп»
+ * из десятков запросов сам вызывает 429 у провайдера, и рабочий ключ
+ * выглядит как исчерпанный.
  */
 object ModelCheck {
 
     private const val PROMPT = "ping"
     private const val MAX_TOKENS = 4
-    private const val TIMEOUT_MS = 25_000L
+    private const val TIMEOUT_MS = 20_000L
+    private const val GAP_MS = 350L
 
-    /** Одновременно проверяем немного моделей, чтобы не ловить 429 от частоты запросов. */
-    private val pool = Executors.newFixedThreadPool(4) { r ->
+    private val pool = Executors.newSingleThreadExecutor { r ->
         Thread(r, "ModelCheck").apply { isDaemon = true }
     }
+    private val running = AtomicBoolean(false)
 
-    data class Verdict(val ok: Boolean, val reason: String, val code: Int)
+    data class Verdict(val ok: Boolean, val reason: String, val code: Int, val detail: String = "")
+
+    fun isRunning(): Boolean = running.get()
 
     /**
-     * Проверяет список моделей провайдера и возвращает отчёт по каждой.
-     * Ключи перебираются кольцом, при 429 — ротация.
+     * Проверяет модели по одной. `onProgress` вызывается после каждой,
+     * чтобы UI мог показывать живой список.
      */
     fun checkProvider(
         context: Context,
         provider: Providers.Provider,
         models: List<String>,
-        onResult: (String, Verdict) -> Unit
+        onProgress: (checked: Int, total: Int, id: String, verdict: Verdict) -> Unit
     ): JSONObject {
         val keys = Secrets.keyRing(context, provider.id)
-        val attemptKeys: List<String?> = if (keys.isEmpty()) listOf(null) else keys
         if (provider.needsKey && keys.isEmpty()) {
             return JSONObject().put("ok", false).put("error", "Нет ключа провайдера")
         }
-        val results = java.util.Collections.synchronizedMap(LinkedHashMap<String, JSONObject>())
-        val latch = java.util.concurrent.CountDownLatch(models.size)
+        running.set(true)
+        val results = ArrayList<JSONObject>()
+        try {
+            models.forEachIndexed { index, modelId ->
+                val verdict = verifyOne(context, provider, keys, modelId)
+                val item = JSONObject()
+                    .put("id", modelId)
+                    .put("ok", verdict.ok)
+                    .put("reason", verdict.reason)
+                    .put("code", verdict.code)
+                    .put("detail", verdict.detail)
+                results.add(item)
+                runCatching { onProgress(index + 1, models.size, modelId, verdict) }
 
-        models.forEach { modelId ->
-            pool.execute {
-                try {
-                    var verdict = Verdict(false, "нет ответа", 0)
-                    for (key in attemptKeys) {
-                        verdict = probeModel(context, provider, key, modelId)
-                        if (verdict.ok) break
-                        if (verdict.code == 429 && key != null) {
-                            Secrets.rotate(context, provider.id, key)
-                            continue
-                        }
-                        if (verdict.reason != "rate_limit") break
-                        Thread.sleep(600)
-                        verdict = probeModel(context, provider, key, modelId)
-                        if (verdict.ok) break
+                if (verdict.ok) {
+                    Quota.clear(context, provider.id, modelId)
+                } else {
+                    when (verdict.reason) {
+                        "account_limit" -> Quota.markAccountLimited(context, provider.id, 5 * 60_000L)
+                        "rate_limit" -> Quota.markLimited(context, provider.id, modelId, 60_000L)
+                        "no_access" -> Quota.clear(context, provider.id, modelId)
+                        else -> Unit
                     }
-                    results[modelId] = verdictToJson(verdict)
-
-                    // Неудачные по квоте/лимиту запоминаем, чтобы не предлагать снова.
-                    if (!verdict.ok) {
-                        when {
-                            verdict.reason == "account_limit" -> Quota.markAccountLimited(context, provider.id, 5 * 60_000L)
-                            verdict.code == 429 || verdict.reason == "rate_limit" ->
-                                Quota.markLimited(context, provider.id, modelId, 3 * 60_000L)
-                            verdict.code == 402 ->
-                                Quota.markAccountLimited(context, provider.id, 5 * 60_000L)
-                            else -> Unit
-                        }
-                    } else {
-                        Quota.clear(context, provider.id, modelId)
-                    }
-                    onResult(modelId, verdict)
-                } catch (t: Throwable) {
-                    val failure = Verdict(false, t.message ?: "ошибка", 0)
-                    results[modelId] = verdictToJson(failure)
-                    onResult(modelId, failure)
-                } finally {
-                    latch.countDown()
                 }
+                if (index < models.size - 1) Thread.sleep(GAP_MS)
             }
+        } finally {
+            running.set(false)
         }
-        latch.await(TIMEOUT_MS + 15_000, TimeUnit.MILLISECONDS)
         val arr = JSONArray()
-        results.forEach { (id, json) -> arr.put(json.put("id", id)) }
+        results.forEach { arr.put(it) }
         return JSONObject().put("ok", true).put("results", arr)
     }
 
-    private fun verdictToJson(v: Verdict): JSONObject = JSONObject()
-        .put("ok", v.ok)
-        .put("reason", v.reason)
-        .put("code", v.code)
+    /**
+     * Одна модель: до двух попыток при явном rate limit и с паузой из `Retry-After`.
+     */
+    private fun verifyOne(
+        context: Context,
+        provider: Providers.Provider,
+        keys: List<String>,
+        modelId: String
+    ): Verdict {
+        val attemptKeys: List<String?> = if (keys.isEmpty()) listOf(null) else keys
+        var last = Verdict(false, "no_answer", 0)
+        for (key in attemptKeys) {
+            last = probeModel(context, provider, key, modelId)
+            if (last.ok) return last
+            if (last.reason == "rate_limit") {
+                // Уважаем подсказку провайдера, затем одна повторная попытка.
+                val wait = if (last.detail.toLongOrNull() ?: 0L > 0) {
+                    (last.detail.toLongOrNull() ?: 0L).coerceIn(1_000L, 15_000L)
+                } else {
+                    1_500L
+                }
+                Thread.sleep(wait)
+                last = probeModel(context, provider, key, modelId)
+                if (last.ok) return last
+            }
+            // Проверка не переключает активный ключ: это делает только чат при реальной работе.
+            if (last.reason != "rate_limit") return last
+        }
+        return last
+    }
 
-    /** Один минимальный запрос к модели. Никаких ретраев здесь. */
     private fun probeModel(
         context: Context,
         provider: Providers.Provider,
@@ -144,41 +157,29 @@ object ModelCheck {
                 }
             }
         } catch (e: Exception) {
-            return Verdict(false, e.message ?: "ошибка", 0)
+            return Verdict(false, "network", 0, e.message ?: "")
         }
 
         val failure = call.exceptionOrNull()
         if (failure is Net.NetException) {
-            val scope = failure.quotaScope
             val reason = when {
                 failure.code == 402 -> "account_limit"
-                scope == "account" -> "account_limit"
+                failure.quotaScope == "account" -> "account_limit"
                 failure.code == 429 -> "rate_limit"
                 failure.code == 401 || failure.code == 403 -> "no_access"
                 failure.code == 404 -> "not_found"
                 else -> "error"
             }
-            return Verdict(false, reason, failure.code)
+            return Verdict(false, reason, failure.code, failure.message)
         }
-        if (failure != null) return Verdict(false, "network", 0)
+        if (failure != null) return Verdict(false, "network", 0, failure.message ?: "")
 
         val json = call.getOrNull() ?: return Verdict(false, "empty", 0)
         val answered = when (provider.apiType) {
-            "anthropic" -> {
-                val content = json.optJSONArray("content")
-                content != null && content.length() > 0
-            }
-            "gemini" -> {
-                val candidates = json.optJSONArray("candidates")
-                candidates != null && candidates.length() > 0
-            }
-            else -> {
-                val choices = json.optJSONArray("choices")
-                choices != null && choices.length() > 0
-            }
+            "anthropic" -> (json.optJSONArray("content")?.length() ?: 0) > 0
+            "gemini" -> (json.optJSONArray("candidates")?.length() ?: 0) > 0
+            else -> (json.optJSONArray("choices")?.length() ?: 0) > 0
         }
-        // Значение 200, но пустой ответ — модель отвечает, просто без контента.
-        return if (answered || json.length() > 0) Verdict(true, "ok", 200)
-        else Verdict(false, "empty", 0)
+        return if (answered) Verdict(true, "ok", 200) else Verdict(false, "empty", 0)
     }
 }

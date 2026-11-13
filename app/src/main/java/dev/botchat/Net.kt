@@ -194,18 +194,22 @@ object Net {
     }
 
     fun friendly(code: Int, body: String): String {
-        val detail = body.take(300).replace(Regex("\\s+"), " ").trim()
+        val detail = body.take(400).replace(Regex("\\s+"), " ").trim()
         return when (code) {
             401, 403 -> "Ключ отклонён или нет доступа (HTTP $code)"
             404 -> "Модель или endpoint не найдены (HTTP 404)"
             413 -> "Слишком большой контекст (HTTP 413)"
             429 -> {
                 val lower = body.lowercase()
-                if (lower.contains("freeusagelimiterror") || lower.contains("free usage limit")) {
-                    "Бесплатный лимит провайдера исчерпан (HTTP 429)"
-                } else {
-                    "Квота исчерпана или лимит запросов (HTTP 429)"
+                val reason = when {
+                    lower.contains("freeusagelimiterror") || lower.contains("free usage limit") ->
+                        "Бесплатный лимит провайдера"
+                    lower.contains("rate limit") || lower.contains("too many requests") ||
+                        lower.contains("requests per") -> "Слишком много запросов"
+                    lower.contains("quota") || lower.contains("insufficient") -> "Квота исчерпана"
+                    else -> "Лимит запросов"
                 }
+                if (detail.isBlank()) "$reason (HTTP 429)" else "$reason (HTTP 429): $detail"
             }
             402 -> "Требуется оплата или подписка (HTTP 402)"
             in 500..599 -> "Провайдер недоступен (HTTP $code)"

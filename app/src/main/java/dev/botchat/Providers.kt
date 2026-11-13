@@ -65,6 +65,10 @@ object Providers {
     private const val CUSTOM_FILE = "custom_providers.json"
     private const val CUSTOM_PROBE_ID = "__probe__"
 
+    /** Последняя причина, по которой не удалось получить список моделей. */
+    @Volatile
+    private var lastModelsError: String = ""
+
     /** Временные заголовки для «прозвона» ещё не сохранённого провайдера. */
     private val probeHeaders = ConcurrentHashMap<String, Map<String, String>>()
 
@@ -212,7 +216,7 @@ object Providers {
     fun headers(provider: Provider, key: String?): Map<String, String> {
         val map = LinkedHashMap<String, String>()
         map["Content-Type"] = "application/json"
-        map["Accept"] = "text/event-stream"
+        map["Accept"] = "application/json"
         map["User-Agent"] = Net.userAgent()
         when (provider.apiType) {
             "anthropic" -> {
@@ -269,6 +273,15 @@ object Providers {
         }
         val models = runCatching { fetchModels(context, temp, key) }.getOrElse { emptyList() }
         probeHeaders.remove(CUSTOM_PROBE_ID)
+        if (models.isEmpty()) {
+            val reason = lastModelsError
+            return JSONObject()
+                .put("ok", false)
+                .put(
+                    "error",
+                    if (reason.isBlank()) "Сервер не вернул список моделей" else reason
+                )
+        }
         val arr = JSONArray()
         models.forEach { arr.put(JSONObject().put("id", it.id).put("name", it.name)) }
         return JSONObject()
@@ -310,8 +323,10 @@ object Providers {
             val parsed = res.getOrNull()
             if (parsed != null && (parsed.has("data") || parsed.has("models"))) {
                 body = parsed
+                lastModelsError = ""
                 break
             }
+            lastModelsError = res.exceptionOrNull()?.message ?: "Пустой ответ на $url"
         }
         if (body == null) return emptyList()
         val out = ArrayList<ModelInfo>()
