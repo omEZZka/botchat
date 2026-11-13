@@ -15,12 +15,14 @@ object ChatEngine {
     private class Run(val cancelled: AtomicBoolean = AtomicBoolean(false)) {
         var handle: Net.Handle? = null
         var thread: Thread? = null
+        val startedAt: Long = System.currentTimeMillis()
     }
 
     private val runs = ConcurrentHashMap<String, Run>()
 
     /** Сколько раз повторяем упёршуюся в квоту модель, прежде чем идти по fallback. */
-    private const val QUOTA_WAVES = 3
+    /** Сколько всего ждать перегрузку канала, прежде чем показать ошибку. */
+    private const val RETRY_BUDGET_MS = 75_000L
 
 
 
@@ -158,7 +160,7 @@ object ChatEngine {
             // Волна повторов: при квоте ждём подсказку провайдера и пробуем ещё раз,
             // не обрывая диалог. Лимит волн защищает от бесконечного ожидания.
             var wave = 0
-            while (!succeeded && !modelDone && wave < QUOTA_WAVES) {
+            while (!succeeded && !modelDone) {
                 val exhaustedKeys = ArrayList<String?>()
                 for (key in attemptKeys) {
                     if (run.cancelled.get()) return
@@ -173,6 +175,8 @@ object ChatEngine {
                     }
                     if (exhaustedKeys.any { it != null && it == key }) continue
                     current = Triple(candidateProvider, candidateModel, key)
+                    // Не долбим провайдера: общий шлюз частоты для всех запросов.
+                    if (!Throttle.acquire(candidateProvider.id) { run.cancelled.get() }) return
                     val outcome = attempt(
                         context, host, run, candidateProvider, key, requestId, system, messages,
                         toolsEnabled, planOnly, candidateModel
@@ -180,6 +184,8 @@ object ChatEngine {
                     if (outcome.ok) {
                         succeeded = true
                         Quota.clear(context, candidateProvider.id, candidateModel)
+                        ModelLimiter.reset(candidateProvider.id)
+                        Throttle.relax(candidateProvider.id)
                         break
                     }
                     lastError = outcome.error
@@ -208,13 +214,21 @@ object ChatEngine {
                             outcome.error.contains("not_executed", ignoreCase = true) ||
                             outcome.error.contains("не выполнен", ignoreCase = true) ||
                             outcome.error.contains("was not executed", ignoreCase = true)
-                        if (!notExecuted) {
+                        if (notExecuted) {
+                            // Держим паузу для всех запросов к этому провайдеру.
+                            Throttle.pause(
+                                candidateProvider.id,
+                                outcome.retryAfterMs.takeIf { it > 0 } ?: 6_000L
+                            )
+                            ModelLimiter.backoff(candidateProvider.id)
+                        } else {
                             Quota.markLimited(
                                 context,
                                 candidateProvider.id,
                                 candidateModel,
                                 (outcome.retryAfterMs.takeIf { it > 0 } ?: 8_000L)
                             )
+                            ModelLimiter.backoff(candidateProvider.id)
                         }
                         if (key != null && attemptKeys.size > 1) {
                             exhaustedKeys.add(key)
@@ -231,17 +245,16 @@ object ChatEngine {
                     break
                 }
                 if (succeeded || modelDone) break
-                // Все ключи упёрлись в квоту: пауза и новая волна.
                 wave += 1
-                if (wave < QUOTA_WAVES) {
-                    val wait = quotaWait(lastRetryAfter, wave)
-                    emitNotice(
-                        host,
-                        requestId,
-                        "Квота исчерпана. Повтор через " + (wait / 1000) + " с"
-                    )
-                    if (!sleepCancellable(run, wait)) return
-                }
+                val elapsed = System.currentTimeMillis() - run.startedAt
+                if (elapsed > RETRY_BUDGET_MS) break
+                val wait = quotaWait(lastRetryAfter, wave)
+                emitNotice(
+                    host,
+                    requestId,
+                    "Канал занят, жду " + (wait / 1000) + " с и повторяю…"
+                )
+                if (!sleepCancellable(run, wait)) return
             }
         }
         if (succeeded) {
@@ -268,10 +281,10 @@ object ChatEngine {
     }
 
     private fun quotaWait(retryAfterMs: Long, wave: Int): Long {
-        if (retryAfterMs > 0) return retryAfterMs.coerceIn(1_000, 900_000)
-        // Провайдер просит «5–10 секунд»: ждём с запасом, но не дольше 20 с.
-        val backoff = 6_000L * wave
-        return backoff.coerceIn(2_000, 20_000)
+        // Провайдер просит «5–10 секунд»: берём верхнюю границу и растём дальше.
+        val hinted = if (retryAfterMs > 0) (retryAfterMs * 3 / 2) else 0L
+        val backoff = 5_000L * wave
+        return maxOf(hinted, backoff).coerceIn(3_000, 25_000)
     }
 
     private fun sleepCancellable(run: Run, ms: Long): Boolean {
@@ -289,6 +302,23 @@ object ChatEngine {
                 "llm.notice",
                 JSONObject().put("requestId", requestId).put("message", text)
             )
+        }
+    }
+
+    /**
+     * Адаптивный интервал между обычными запросами: после отказа растёт,
+     * после успеха сбрасывается. Это защита от «все каналы под лимитом».
+     */
+    private object ModelLimiter {
+        private val extra = ConcurrentHashMap<String, Long>()
+
+        fun backoff(providerId: String) {
+            val current = extra[providerId] ?: 0L
+            extra[providerId] = (current + 800L).coerceAtMost(8_000L)
+        }
+
+        fun reset(providerId: String) {
+            extra.remove(providerId)
         }
     }
 

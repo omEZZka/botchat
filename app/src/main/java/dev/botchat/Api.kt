@@ -259,7 +259,7 @@ object Models {
     private const val FILE = "models.json"
 
     /** Сколько моделей проверять коротким запросом за один прогон. */
-    private const val MAX_VERIFY_MODELS = 24
+    private const val MAX_VERIFY_MODELS = 12
 
     private fun file(context: Context) = java.io.File(context.filesDir, FILE)
 
@@ -345,10 +345,10 @@ object Models {
      * Полная проверка: список моделей провайдера + короткий запрос к каждой.
      * Возвращает только рабочие модели и отчёт по остальным.
      */
-    @Synchronized
     fun verify(context: Context, providerId: String, requested: JSONArray?, fetchList: Boolean): JSONObject {
         val provider = Providers.byId(context, providerId)
             ?: return JSONObject().put("ok", false).put("error", "Провайдер не найден")
+        Throttle.reset(providerId)
 
         val candidates = LinkedHashSet<String>()
         if (requested != null) {
@@ -399,6 +399,9 @@ object Models {
                     added += 1
                 }
                 // Ранее скрытая пользователем модель остаётся скрытой.
+            } else if (item.optString("reason") == "rate_limit") {
+                // Канал занят лимитом — это не свойство модели.
+                unverified.put(id)
             } else {
                 rejected.put(
                     JSONObject()
@@ -417,6 +420,7 @@ object Models {
             .put("working", working)
             .put("rejected", rejected)
             .put("unverified", unverified)
+            .put("channelBusy", report.optBoolean("channelBusy"))
             .put("models", cached(context))
     }
 

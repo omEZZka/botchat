@@ -55,6 +55,10 @@ const ProvidersUI = (() => {
         onclick: (ev) => loadProviderModels(provider, ev.currentTarget),
       }),
       U.el('button', {
+        class: 'btn small', text: 'Канал',
+        onclick: (ev) => checkChannel(provider, ev.currentTarget),
+      }),
+      U.el('button', {
         class: 'btn small', text: 'Проверить',
         onclick: (ev) => checkHealth(provider, ev.currentTarget),
       }),
@@ -175,7 +179,48 @@ const ProvidersUI = (() => {
     S.models = res.models || S.models;
     await load();
     Render.closeSheet();
-    openVerifyReport(provider, working, rejected, res.total || (working.length + rejected.length));
+    openVerifyReport(
+      provider, working, rejected,
+      res.total || (working.length + rejected.length),
+      res.unverified || [], res.channelBusy
+    );
+  };
+
+  /**
+   * Один пробный запрос к провайдеру: показывает, живой ли канал,
+   * не расходуя лимит на список моделей.
+   */
+  const checkChannel = async (provider, button) => {
+    const models = (S.models || [])
+      .filter((m) => m.provider === provider.id)
+      .map((m) => m.id);
+    if (!models.length) {
+      Render.toast('Сначала загрузите список моделей');
+      return;
+    }
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Проверяю…';
+    }
+    const res = await Native.api('providers.verify', {
+      providerId: provider.id,
+      models: [models[0]],
+    });
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Канал';
+    }
+    if (!res || !res.ok) {
+      Render.toast((res && res.error) || 'Не удалось проверить канал');
+      return;
+    }
+    const ok = (res.working || []).length > 0;
+    if (ok) {
+      Render.toast('Канал работает: ' + models[0] + ' ответила');
+      return;
+    }
+    const rejected = (res.rejected || [])[0] || {};
+    Render.toast('Канал занят: ' + reasonText(rejected.reason, rejected.code));
   };
 
   /** Быстрая загрузка списка моделей одного провайдера (без проверки каждой модели). */
@@ -211,7 +256,7 @@ const ProvidersUI = (() => {
     }
   };
 
-  const openVerifyReport = (provider, working, rejected, total) => {
+  const openVerifyReport = (provider, working, rejected, total, unverified, channelBusy) => {
     const content = U.el('div', { class: 'verify-sheet' });
     content.appendChild(U.el('div', { class: 'verify-summary' }, [
       U.el('span', { class: 'verify-ok', text: working.length + ' работают' }),
@@ -233,9 +278,25 @@ const ProvidersUI = (() => {
         U.el('span', { class: 'probe-reason', text: reasonText(item.reason, item.code) }),
       ])));
     }
+    if (channelBusy) {
+      content.appendChild(U.el('div', { class: 'verify-busy' }, [
+        Icons.make('warn', 16),
+        U.el('span', {
+          text: 'Провайдер ограничивает канал: часть моделей не проверена. ' +
+            'Повторите проверку через минуту — лимит считается по ключу и каналу, а не по модели.',
+        }),
+      ]));
+    }
+    if ((unverified || []).length) {
+      content.appendChild(U.el('div', { class: 'verify-title', text: 'Не проверены (канал занят)' }));
+      unverified.forEach((id) => content.appendChild(U.el('div', { class: 'probe-model pending' }, [
+        U.el('span', { class: 'verify-dot idle' }),
+        U.el('span', { class: 'probe-name', text: id }),
+      ])));
+    }
     content.appendChild(U.el('p', {
       class: 'muted small',
-      text: 'Проверка — короткий реальный запрос к каждой модели. Ограничение по частоте запоминается на минуту.',
+      text: 'Проверка — короткий реальный запрос к каждой модели. Лимит запросов считается провайдером по ключу.',
     }));
     if (rejected.length) {
       content.appendChild(U.el('button', {
@@ -300,7 +361,7 @@ const ProvidersUI = (() => {
 
     let unverifiedModels = [];
 
-    const renderReport = (working, rejected, total, unverified) => {
+    const renderReport = (working, rejected, total, unverified, channelBusy) => {
       U.clear(probe);
       verified = true;
       picked.clear();
@@ -336,6 +397,15 @@ const ProvidersUI = (() => {
           ]));
         });
       }
+      if (channelBusy) {
+        probe.appendChild(U.el('div', { class: 'verify-busy' }, [
+          Icons.make('warn', 16),
+          U.el('span', {
+            text: 'Провайдер ограничивает канал: часть моделей не проверена. ' +
+              'Это не значит, что они недоступны — вернитесь через минуту.',
+          }),
+        ]));
+      }
       if (unverified.length) {
         probe.appendChild(U.el('div', { class: 'verify-title', text: 'Ещё не проверены' }));
         unverified.forEach((id) => {
@@ -361,7 +431,8 @@ const ProvidersUI = (() => {
                 working.concat(more.working || []),
                 rejected.concat(more.rejected || []),
                 total,
-                unverified.slice(24).concat(more.unverified || [])
+                unverified.slice(24).concat(more.unverified || []),
+                more.channelBusy
               );
               await load();
             } else {
@@ -501,7 +572,7 @@ const ProvidersUI = (() => {
             markRow(modelId, bad || { ok: true });
           }
         });
-        renderReport(working, rejected, ids.length, unverified);
+        renderReport(working, rejected, ids.length, unverified, single.channelBusy);
         await load();
       },
     });

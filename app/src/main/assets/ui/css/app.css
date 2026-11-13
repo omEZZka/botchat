@@ -1628,3 +1628,17 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
 
 .verify-dot.idle { background: var(--mut); opacity: 0.5; }
 .probe-model.pending { opacity: 0.8; }
+
+.verify-busy {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  margin: 8px 0;
+  border-radius: 10px;
+  background: rgba(240, 180, 41, 0.13);
+  color: #f2d08a;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.verify-busy .icon { flex: 0 0 auto; margin-top: 1px; }

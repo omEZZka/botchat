@@ -385,7 +385,7 @@ const Agent = (() => {
       throw new Error((res && res.error) || 'Не удалось начать запрос');
     }
 
-    const deadline = Date.now() + 180000;
+    const deadline = Date.now() + 300000;
     while (!finished && Date.now() < deadline) {
       if (active && active.cancelled) {
         Native.api('chat.cancel', { chatId });

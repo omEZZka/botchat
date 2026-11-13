@@ -22,8 +22,7 @@ object ModelCheck {
 
     private const val PROMPT = "ping"
     private const val MAX_TOKENS = 4
-    private const val MIN_GAP_MS = 220L
-    private const val WORKERS = 3
+    private const val WORKERS = 1
     private const val RETRY_WAIT_CAP_MS = 10_000L
     private const val TOTAL_BUDGET_MS = 90_000L
 
@@ -67,6 +66,8 @@ object ModelCheck {
         val latch = CountDownLatch(models.size)
         val deadline = System.currentTimeMillis() + TOTAL_BUDGET_MS
         val gate = Any()
+        val consecutiveBusy = java.util.concurrent.atomic.AtomicInteger(0)
+        val channelBusy = AtomicBoolean(false)
 
         fun waitForSlot() {
             while (true) {
@@ -74,18 +75,17 @@ object ModelCheck {
                 val pause = pauseUntil.get()
                 val now = System.currentTimeMillis()
                 if (pause > now) {
-                    Thread.sleep((pause - now).coerceAtMost(1_000L))
+                    Thread.sleep((pause - now).coerceAtMost(500L))
                     continue
                 }
                 synchronized(gate) {
-                    val next = nextSlotAt
                     val t = System.currentTimeMillis()
-                    if (t >= next) {
-                        nextSlotAt = t + MIN_GAP_MS
+                    if (t >= nextSlotAt) {
+                        nextSlotAt = t + Throttle.interval(provider.id)
                         return
                     }
                 }
-                Thread.sleep(30)
+                Thread.sleep(40)
             }
         }
 
@@ -99,6 +99,10 @@ object ModelCheck {
                     try {
                         if (accountBlocked.get()) {
                             results[index] = rejected(modelId, "account_limit", 0, "пропущено: лимит аккаунта")
+                            return@execute
+                        }
+                        if (channelBusy.get()) {
+                            results[index] = rejected(modelId, "rate_limit", 429, "канал занят лимитом")
                             return@execute
                         }
                         val knownWait = Quota.remaining(context, provider.id, modelId)
@@ -120,8 +124,14 @@ object ModelCheck {
 
                         // Временная перегрузка канала: пауза для всего пула и один повтор.
                         if (!verdict.ok && verdict.reason == "rate_limit") {
-                            val wait = waitHint(verdict.detail).coerceAtMost(RETRY_WAIT_CAP_MS)
+                            // Три подряд «канал занят» — прекращаем проверку,
+                            // чтобы не выжигать лимит и не показывать ложные отказы.
+                            if (consecutiveBusy.incrementAndGet() >= 3) channelBusy.set(true)
+                            val hint = waitHint(verdict.detail)
+                            val wait = hint.coerceAtMost(RETRY_WAIT_CAP_MS)
+                            // Пауза для всего пула и для общего шлюза провайдера.
                             pauseUntil.set(System.currentTimeMillis() + wait)
+                            Throttle.pause(provider.id, wait)
                             Thread.sleep(wait)
                             verdict = probeModel(context, provider, keys, modelId)
                         }
@@ -133,6 +143,7 @@ object ModelCheck {
                             .put("code", verdict.code)
                             .put("detail", verdict.detail)
 
+                        if (verdict.ok) consecutiveBusy.set(0)
                         when {
                             verdict.ok -> Quota.clear(context, provider.id, modelId)
                             verdict.reason == "account_limit" -> {
@@ -172,6 +183,7 @@ object ModelCheck {
             .put("ok", true)
             .put("results", arr)
             .put("accountBlocked", blocked)
+            .put("channelBusy", channelBusy.get())
     }
 
     private fun rejected(id: String, reason: String, code: Int, detail: String): JSONObject =
