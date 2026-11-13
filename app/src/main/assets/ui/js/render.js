@@ -27,11 +27,12 @@ const Render = (() => {
         : U.escape(text);
       return clean;
     };
-    const enhance = (container) => {
+    const enhance = (container, opts) => {
+      const withHighlight = !opts || opts.highlight !== false;
       U.$$('pre code', container).forEach((code) => {
         if (code.dataset.done) return;
         code.dataset.done = '1';
-        if (window.hljs) {
+        if (withHighlight && window.hljs) {
           try {
             hljs.highlightElement(code);
           } catch (_) {
@@ -206,6 +207,7 @@ const Render = (() => {
       accent.dataset.theme = S.settings.theme;
       accent.dataset.accent = S.settings.accent;
       Accent.apply();
+      if (window.Appearance) Appearance.apply();
       const view = U.$('#view');
       if (!view) return;
       document.documentElement.dataset.depth = String(S.sheets.length + (S.screen === 'chat' ? 1 : 0));
@@ -253,9 +255,14 @@ const Render = (() => {
     return badges;
   };
 
+  const appIcon = (size) => {
+    const icon = window.Appearance ? Appearance.currentIcon() : { name: 'bubbleDots', filled: false };
+    return Avatars.svg(icon.name, { size: size || 22, filled: icon.filled });
+  };
+
   const listHeader = () => U.el('header', { class: 'topbar' }, [
     U.el('div', { class: 'brand' }, [
-      U.el('span', { class: 'brand-mark', html: Icons.html('sparkle', 18) }),
+      U.el('span', { class: 'brand-mark', html: appIcon(22) }),
       U.el('span', { class: 'brand-name', text: 'botCHAT' }),
     ]),
     U.el('div', { class: 'topbar-actions' }, [
@@ -1139,7 +1146,7 @@ const Render = (() => {
   };
 
   return {
-    bind, render, openSheet, closeSheet, hasSheet, toast, confirm, prompt,
+    bind, render, openSheet, closeSheet, hasSheet, toast, confirm, prompt, appIcon,
     avatar, iconButton, MD, scrollToBottom, renderProgress,
     statusText, toolCard, sheetHost,
   };

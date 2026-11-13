@@ -225,41 +225,19 @@ const Composer = (() => {
 /**
  * Инкрементальный стрим в пузырь: батчинг кадров, без полного ре-рендера.
  */
+/**
+ * Поток в пузырь.
+ *
+ * Раньше на каждый чанк перерисовывался весь markdown и заново запускался
+ * highlight.js — на длинном ответе это O(n²) и UI «замирал» на середине.
+ * Теперь: сразу дописываем обычный текст (дёшево), markdown пересобираем
+ * не чаще 220 мс, а подсветку — только по завершении.
+ */
 const ChatStream = (() => {
-  const pending = new Map();
-  let scheduled = false;
-
-  const flush = () => {
-    scheduled = false;
-    const batch = Array.from(pending.entries());
-    pending.clear();
-    for (const [messageId, text] of batch) {
-      const msg = findMessage(messageId);
-      if (!msg) continue;
-      msg.text = text;
-      msg.streaming = true;
-      const node = U.$('[data-msg="' + messageId + '"]');
-      if (!node) {
-        Bus.emit('render');
-        continue;
-      }
-      const bubble = node.querySelector('.bubble-text');
-      if (bubble) {
-        bubble.innerHTML = Render.MD.render(text);
-        Render.MD.enhance(bubble);
-      }
-      let typing = U.$('#typing');
-      const host = U.$('#messages');
-      if (!typing && host) {
-        typing = U.el('div', { class: 'typing', id: 'typing' }, [U.el('span'), U.el('span'), U.el('span')]);
-        host.appendChild(typing);
-      }
-      if (host) {
-        const distance = host.scrollHeight - host.scrollTop - host.clientHeight;
-        if (distance < 140) host.scrollTop = host.scrollHeight;
-      }
-    }
-  };
+  const MARKDOWN_EVERY_MS = 220;
+  let lastFlush = 0;
+  let flushTimer = null;
+  const state = new Map();
 
   const findMessage = (messageId) => {
     for (const list of S.messages.values()) {
@@ -269,15 +247,81 @@ const ChatStream = (() => {
     return null;
   };
 
-  const update = (chatId, messageId, text) => {
-    const list = S.messages.get(chatId) || [];
-    const msg = list.find((m) => m.id === messageId);
-    if (msg) msg.text = text;
-    pending.set(messageId, text);
-    if (!scheduled) {
-      scheduled = true;
-      U.raf(flush);
+  /** Быстрое дописывание: текстовый узел вместо полного парсинга. */
+  const writeFast = (bubble, text) => {
+    bubble.classList.remove('rendered');
+    bubble.textContent = text;
+  };
+
+  const renderMarkdown = (messageId, text, final) => {
+    const st = state.get(messageId);
+    const bubble = st && st.bubble;
+    if (!bubble || !bubble.isConnected) return;
+    bubble.innerHTML = Render.MD.render(text);
+    bubble.classList.add('rendered');
+    if (final) Render.MD.enhance(bubble);
+    const host = U.$('#messages');
+    if (host) {
+      const distance = host.scrollHeight - host.scrollTop - host.clientHeight;
+      if (distance < 180) host.scrollTop = host.scrollHeight;
     }
+  };
+
+  const ensureTyping = () => {
+    const host = U.$('#messages');
+    if (!host) return;
+    if (U.$('#typing')) return;
+    host.appendChild(U.el('div', { class: 'typing', id: 'typing' }, [
+      U.el('span'), U.el('span'), U.el('span'),
+    ]));
+    host.scrollTop = host.scrollHeight;
+  };
+
+  const update = (chatId, messageId, text) => {
+    const msg = findMessage(messageId);
+    if (msg) msg.text = text;
+    const node = U.$('[data-msg="' + messageId + '"]');
+    if (!node) {
+      Bus.emit('render');
+      return;
+    }
+    const bubble = node.querySelector('.bubble-text');
+    if (!bubble) return;
+    state.set(messageId, { bubble, text });
+    ensureTyping();
+
+    // 1) моментально — простой текст
+    writeFast(bubble, text);
+
+    // 2) markdown — с ограничением частоты
+    const now = Date.now();
+    const elapsed = now - lastFlush;
+    if (elapsed >= MARKDOWN_EVERY_MS) {
+      lastFlush = now;
+      renderMarkdown(messageId, text, false);
+      return;
+    }
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      lastFlush = Date.now();
+      const current = state.get(messageId);
+      if (current) renderMarkdown(messageId, current.text, false);
+    }, MARKDOWN_EVERY_MS - elapsed);
+  };
+
+  /** Финальный рендер: полный markdown + подсветка кода. */
+  const finish = (messageId, text) => {
+    const msg = findMessage(messageId);
+    if (msg) msg.text = text;
+    const node = U.$('[data-msg="' + messageId + '"]');
+    if (!node) return;
+    const bubble = node.querySelector('.bubble-text');
+    if (!bubble) return;
+    state.set(messageId, { bubble, text });
+    renderMarkdown(messageId, text, true);
+    const typing = U.$('#typing');
+    if (typing) typing.remove();
   };
 
   const notice = (chatId, messageId, text) => {
@@ -326,7 +370,7 @@ const ChatStream = (() => {
     box.textContent = 'Продолжено на ' + label;
   };
 
-  return { update, notice, switched, status };
+  return { update, finish, notice, switched, status };
 })();
 
 window.Composer = Composer;

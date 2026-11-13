@@ -40,6 +40,7 @@ const Boot = (() => {
     stage('Настройки', 8);
     S.env = await withTimeout(Native.env(), 4000, { versionName: '—', rootfs: false });
     Prefs.apply();
+    if (window.Appearance) Appearance.apply();
 
     Bus.on('network:changed', (online) => {
       S.online = online;

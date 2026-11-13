@@ -511,6 +511,10 @@ const Agent = (() => {
     ChatStream.status(chatId, message.id, '');
     offDelta(); offTool(); offDone(); offError(); offNotice(); offModel(); offStop();
 
+    ChatStream.status(chatId, message.id, '');
+    if (buffer.trim()) {
+      ChatStream.finish(message.id, buffer.trim());
+    }
     if (lastError && !buffer.trim() && !toolCalls.length) throw new Error(lastError);
     if (buffer.trim() || toolCalls.length) {
       await Store.updateMessage(chatId, message.id, { text: buffer.trim(), streaming: false }, { silent: true });

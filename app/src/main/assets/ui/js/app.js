@@ -119,6 +119,10 @@ const Actions = (() => {
       Render.closeSheet();
       Render.toast('Скопировано');
     }));
+    items.push(menuItem('article', 'Выбрать текст', () => {
+      Render.closeSheet();
+      selectTextSheet(msg);
+    }));
     if (msg.role !== 'system') {
       items.push(menuItem('reply', 'Ответить', () => {
         Render.closeSheet();
@@ -153,6 +157,45 @@ const Actions = (() => {
     }));
     const content = U.el('div', { class: 'msg-menu' }, items);
     Render.openSheet({ title: U.truncate(msg.text || 'Сообщение', 40), content });
+  };
+
+  /** Режим выделения: обычное выделение включено только здесь. */
+  const selectTextSheet = (msg) => {
+    const area = U.el('textarea', {
+      class: 'field textarea selectable-text',
+      rows: 10,
+      readonly: 'readonly',
+      value: msg.text || '',
+    });
+    const content = U.el('div', { class: 'confirm' }, [
+      U.el('p', {
+        class: 'muted small',
+        text: 'Выделите нужный фрагмент и скопируйте. В остальных местах выделение отключено, чтобы не мешать.',
+      }),
+      area,
+      U.el('div', { class: 'confirm-actions' }, [
+        U.el('button', {
+          class: 'btn', text: 'Копировать всё',
+          onclick: async () => {
+            await U.copyToClipboard(msg.text || '');
+            Render.toast('Скопировано');
+          },
+        }),
+        U.el('button', {
+          class: 'btn', text: 'Выделить всё',
+          onclick: () => {
+            area.focus();
+            area.select();
+          },
+        }),
+        U.el('button', {
+          class: 'btn primary', text: 'Готово',
+          onclick: () => Render.closeSheet(),
+        }),
+      ]),
+    ]);
+    Render.openSheet({ title: 'Текст сообщения', content });
+    setTimeout(() => area.focus(), 120);
   };
 
   const menuItem = (icon, label, handler) => U.el('button', {
@@ -317,6 +360,7 @@ const Actions = (() => {
     go, newChat, openChat, openChatAt, back, togglePin, toggleArchive, confirmDelete,
     openAttachment, replyTo, messageMenu, openChatMenu, openChatSheet, openAppMenu,
     openModelSheet, compactSession, openTaskGraph, resolvePermission, handleBack,
+    selectTextSheet,
     handleIntent, sendPendingReply, forwardMessage, openSettingsSection,
   };
 })();

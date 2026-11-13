@@ -118,6 +118,12 @@ const Pickers = (() => {
     });
     content.appendChild(accentRow);
 
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Иконка и цвет' }));
+    content.appendChild(U.el('button', {
+      class: 'btn full', text: 'Иконка, фон и палитра',
+      onclick: () => { Render.closeSheet(); appearanceSheet(); },
+    }));
+
     content.appendChild(U.el('h3', { class: 'section-title', text: 'Язык / Language' }));
     const langRow = U.el('div', { class: 'seg' });
     [{ id: 'ru', label: 'RU' }, { id: 'en', label: 'EN' }].forEach((lang) => {
@@ -161,6 +167,170 @@ const Pickers = (() => {
     }));
 
     Render.openSheet({ title: t('settings.title'), content });
+  };
+
+  const appearanceSheet = () => {
+    const icon = Appearance.currentIcon();
+    const content = U.el('div', { class: 'appearance-sheet' });
+
+    // --- предпросмотр ---
+    const preview = U.el('div', { class: 'icon-preview' });
+    const renderPreview = () => {
+      const cur = Appearance.currentIcon();
+      U.clear(preview);
+      preview.innerHTML = Avatars.svg(cur.name, { size: 58, filled: cur.filled });
+    };
+    content.appendChild(U.el('div', { class: 'icon-preview-wrap' }, [preview]));
+    renderPreview();
+
+    // --- иконка: 116 вариантов ---
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Иконка' }));
+    const grid = U.el('div', { class: 'icon-grid' });
+    Avatars.ids.forEach((name) => {
+      [false, true].forEach((filled) => {
+        const active = icon.name === name && icon.filled === filled;
+        const cell = U.el('button', {
+          class: 'icon-cell' + (active ? ' active' : ''),
+          type: 'button',
+          'aria-label': name + (filled ? ' (заливка)' : ' (контур)'),
+          onclick: () => {
+            Appearance.setIcon(name, filled);
+            U.$$('.icon-cell', grid).forEach((n) => n.classList.remove('active'));
+            cell.classList.add('active');
+            renderPreview();
+          },
+        });
+        cell.innerHTML = Avatars.svg(name, { size: 22, filled });
+        grid.appendChild(cell);
+      });
+    });
+    content.appendChild(grid);
+
+    // --- 15 пресетов + свой цвет ---
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Акцентный цвет' }));
+    const presets = U.el('div', { class: 'palette' });
+    Appearance.PRESETS.forEach((preset) => {
+      presets.appendChild(U.el('button', {
+        class: 'palette-dot', type: 'button', title: preset.name,
+        style: 'background:' + preset.acc,
+        'aria-label': preset.name,
+        onclick: () => {
+          Appearance.setPreset(preset.id);
+          renderPreview();
+          renderSliders(preset.acc);
+          Render.toast('Цвет: ' + preset.name);
+        },
+      }));
+    });
+    content.appendChild(presets);
+
+    // --- свой цвет: ползунки + номер ---
+    const sliders = U.el('div', { class: 'slider-group' });
+    let hue = 220;
+    let sat = 0.9;
+    let val = 1;
+    const hexInput = U.el('input', {
+      class: 'field mono-input', type: 'text', value: Appearance.current().accent || '#4F86FF',
+      placeholder: '#4F86FF', spellcheck: 'false',
+    });
+    const makeSlider = (label, min, max, value, onInput) => {
+      const input = U.el('input', {
+        class: 'range', type: 'range', min: String(min), max: String(max), value: String(value),
+      });
+      input.addEventListener('input', () => onInput(parseFloat(input.value)));
+      return U.el('label', { class: 'slider-row' }, [
+        U.el('span', { class: 'slider-label', text: label }),
+        input,
+      ]);
+    };
+    const applyHsv = () => {
+      const hex = Appearance.hsvToHex(hue, sat, val);
+      hexInput.value = hex;
+      Appearance.setAccent(hex);
+      renderPreview();
+    };
+    const renderSliders = (hex) => {
+      U.clear(sliders);
+      const rgb = Appearance.parseHex(hex) || { r: 79, g: 134, b: 255 };
+      const r = rgb.r / 255;
+      const g = rgb.g / 255;
+      const b = rgb.b / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      val = max;
+      sat = max === 0 ? 0 : (max - min) / max;
+      let h = 0;
+      if (max !== min) {
+        if (max === r) h = ((g - b) / (max - min)) % 6;
+        else if (max === g) h = (b - r) / (max - min) + 2;
+        else h = (r - g) / (max - min) + 4;
+        h = Math.round(h * 60);
+        if (h < 0) h += 360;
+      }
+      hue = h;
+      sliders.appendChild(makeSlider('Оттенок', 0, 360, hue, (v) => { hue = v; applyHsv(); }));
+      sliders.appendChild(makeSlider('Насыщенность', 0, 100, Math.round(sat * 100), (v) => {
+        sat = v / 100; applyHsv();
+      }));
+      sliders.appendChild(makeSlider('Яркость', 20, 100, Math.round(val * 100), (v) => {
+        val = v / 100; applyHsv();
+      }));
+    };
+    renderSliders(Appearance.current().accent || '#4F86FF');
+
+    sliders.appendChild(U.el('label', { class: 'slider-row' }, [
+      U.el('span', { class: 'slider-label', text: 'Код' }),
+      hexInput,
+      U.el('button', {
+        class: 'link-btn', text: 'Применить',
+        onclick: () => {
+          const hex = hexInput.value.trim();
+          if (!Appearance.parseHex(hex)) {
+            Render.toast('Нужен формат #RRGGBB');
+            return;
+          }
+          Appearance.setAccent(hex);
+          renderSliders(hex);
+          renderPreview();
+        },
+      }),
+    ]));
+    content.appendChild(sliders);
+
+    // --- фон ---
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Фон приложения' }));
+    const bgs = U.el('div', { class: 'palette' });
+    Appearance.BG_PRESETS.forEach((hex) => {
+      bgs.appendChild(U.el('button', {
+        class: 'palette-dot', type: 'button', style: 'background:' + hex,
+        'aria-label': 'Фон ' + hex,
+        onclick: () => { Appearance.setBackground(hex); Render.toast('Фон: ' + hex); },
+      }));
+    });
+    content.appendChild(bgs);
+    const bgInput = U.el('input', {
+      class: 'field mono-input', type: 'text',
+      value: Appearance.current().bg || '#0B0F16', spellcheck: 'false',
+    });
+    content.appendChild(U.el('div', { class: 'slider-row' }, [
+      U.el('span', { class: 'slider-label', text: 'Свой фон' }),
+      bgInput,
+      U.el('button', {
+        class: 'link-btn', text: 'Применить',
+        onclick: () => {
+          const hex = bgInput.value.trim();
+          if (!Appearance.parseHex(hex)) { Render.toast('Нужен формат #RRGGBB'); return; }
+          Appearance.setBackground(hex);
+        },
+      }),
+    ]));
+
+    content.appendChild(U.el('p', {
+      class: 'muted small',
+      text: 'Иконка и цвета применяются сразу. Иконка в лаунчере Android меняется вместе с настройкой.',
+    }));
+
+    Render.openSheet({ title: 'Иконка и цвет', content, full: true });
   };
 
   const numberRow = (label, value, onChange) => {
@@ -468,6 +638,7 @@ const Pickers = (() => {
   return {
     chatSettings, appSettings, appMenu, exportSheet, exportChat, exportData,
     aboutSheet, taskGraph, openCheckpoints, toggleRow, numberRow, profilesSheet,
+    appearanceSheet,
   };
 })();
 
