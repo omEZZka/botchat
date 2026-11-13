@@ -54,6 +54,7 @@ object Api {
                 JSONObject().put("ok", true)
             }
             "models.refresh" -> Models.refresh(context)
+            "models.forProvider" -> Models.forProvider(context, payload.optString("providerId"))
             "providers.diagnose" -> {
                 val providerId = payload.optString("providerId")
                 val modelId = payload.optString("modelId")
@@ -80,9 +81,12 @@ object Api {
                         else if (provider.apiType == "gemini") "/models/$modelId:generateContent"
                         else "/chat/completions")
             }
-            "providers.verify" -> {
-                Models.verify(context, payload.optString("providerId"), payload.optJSONArray("models"))
-            }
+            "providers.verify" -> Models.verify(
+                context,
+                payload.optString("providerId"),
+                payload.optJSONArray("models"),
+                payload.optBoolean("fetchList", false)
+            )
             "models.hide" -> Models.hide(
                 context,
                 payload.optString("providerId"),
@@ -254,6 +258,9 @@ object Models {
 
     private const val FILE = "models.json"
 
+    /** Сколько моделей проверять коротким запросом за один прогон. */
+    private const val MAX_VERIFY_MODELS = 24
+
     private fun file(context: Context) = java.io.File(context.filesDir, FILE)
 
     /** Как сохранено, без фильтрации — для записи. */
@@ -339,7 +346,7 @@ object Models {
      * Возвращает только рабочие модели и отчёт по остальным.
      */
     @Synchronized
-    fun verify(context: Context, providerId: String, requested: JSONArray?): JSONObject {
+    fun verify(context: Context, providerId: String, requested: JSONArray?, fetchList: Boolean): JSONObject {
         val provider = Providers.byId(context, providerId)
             ?: return JSONObject().put("ok", false).put("error", "Провайдер не найден")
 
@@ -350,7 +357,7 @@ object Models {
                 if (id.isNotBlank()) candidates.add(id)
             }
         }
-        if (candidates.isEmpty()) {
+        if (candidates.isEmpty() && fetchList) {
             val fetched = runCatching { Providers.fetchModels(context, provider) }
                 .getOrElse { emptyList() }
             fetched.forEach { candidates.add(it.id) }
@@ -359,11 +366,18 @@ object Models {
             return JSONObject().put("ok", false).put("error", "Провайдер не вернул список моделей")
         }
 
-        val report = ModelCheck.checkProvider(context, provider, candidates.toList()) { _, _, _, _ -> }
+        val limit = if (requested == null || requested.length() == 0) MAX_VERIFY_MODELS else Int.MAX_VALUE
+        val toCheck = candidates.take(limit)
+        val skipped = candidates.drop(limit)
+        val report = ModelCheck.checkProvider(context, provider, toCheck)
         val results = report.optJSONArray("results") ?: JSONArray()
 
         val working = JSONArray()
         val rejected = JSONArray()
+        // Остальные модели не проверялись в этом прогоне — они не отклонены,
+        // а просто ещё не проверены: показываем отдельным списком.
+        val unverified = JSONArray()
+        skipped.forEach { unverified.put(it) }
 
         // Сначала сохраняем рабочие модели в кеш.
         val cached = cachedRaw(context)
@@ -402,6 +416,49 @@ object Models {
             .put("total", results.length())
             .put("working", working)
             .put("rejected", rejected)
+            .put("unverified", unverified)
+            .put("models", cached(context))
+    }
+
+    /** Список моделей одного провайдера — быстро, без обхода остальных. */
+    fun forProvider(context: Context, providerId: String): JSONObject {
+        val provider = Providers.byId(context, providerId)
+            ?: return JSONObject().put("ok", false).put("error", "Провайдер не найден")
+        if (provider.needsKey && !Secrets.hasKey(context, providerId)) {
+            return JSONObject().put("ok", false).put("error", "Нет ключа")
+        }
+        val fetched = runCatching { Providers.fetchModels(context, provider) }
+            .getOrElse { emptyList() }
+        if (fetched.isEmpty()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", Providers.lastModelsError.ifBlank { "нет моделей" })
+        }
+        val cached = cachedRaw(context)
+        var added = 0
+        fetched.forEach { m ->
+            var present = false
+            for (j in 0 until cached.length()) {
+                val entry = cached.getJSONObject(j)
+                if (entry.optString("provider") == providerId && entry.optString("id") == m.id) present = true
+            }
+            if (!present) {
+                cached.put(
+                    JSONObject()
+                        .put("id", m.id)
+                        .put("name", m.name)
+                        .put("provider", providerId)
+                        .put("context", m.context)
+                        .put("reasoning", m.reasoning)
+                        .put("vision", m.vision)
+                )
+                added += 1
+            }
+        }
+        if (added > 0) save(context, cached)
+        return JSONObject()
+            .put("ok", true)
+            .put("added", added)
             .put("models", cached(context))
     }
 
@@ -409,12 +466,40 @@ object Models {
         val result = JSONArray()
         val errors = JSONObject()
         val providers = Providers.all(context)
-        for (provider in providers) {
-            if (provider.needsKey && !Secrets.hasKey(context, provider.id)) continue
-            val models = runCatching { Providers.fetchModels(context, provider) }.getOrElse { emptyList() }
+            .filter { !it.needsKey || Secrets.hasKey(context, it.id) }
+        if (providers.isEmpty()) {
+            return JSONObject().put("ok", true).put("models", cached(context)).put("errors", errors)
+        }
+
+        // Провайдеры независимы: тянем списки параллельно, иначе обновление
+        // превращается в последовательность сетевых таймаутов.
+        val collected = java.util.concurrent.ConcurrentHashMap<String, List<Providers.ModelInfo>>()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(
+            providers.size.coerceIn(1, 6)
+        ) { r -> Thread(r, "ModelsRefresh").apply { isDaemon = true } }
+        try {
+            val latch = java.util.concurrent.CountDownLatch(providers.size)
+            providers.forEach { provider ->
+                pool.execute {
+                    try {
+                        val models = runCatching { Providers.fetchModels(context, provider) }
+                            .getOrElse { emptyList() }
+                        collected[provider.id] = models
+                    } finally {
+                        latch.countDown()
+                    }
+                }
+            }
+            latch.await(40, java.util.concurrent.TimeUnit.SECONDS)
+        } finally {
+            pool.shutdownNow()
+        }
+
+        providers.forEach { provider ->
+            val models = collected[provider.id] ?: emptyList()
             if (models.isEmpty()) {
                 errors.put(provider.id, "нет моделей")
-                continue
+                return@forEach
             }
             models.forEach { m ->
                 result.put(

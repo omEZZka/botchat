@@ -51,6 +51,10 @@ const ProvidersUI = (() => {
         onclick: () => openKeySheet(provider),
       }),
       U.el('button', {
+        class: 'btn small', text: 'Модели',
+        onclick: (ev) => loadProviderModels(provider, ev.currentTarget),
+      }),
+      U.el('button', {
         class: 'btn small', text: 'Проверить',
         onclick: (ev) => checkHealth(provider, ev.currentTarget),
       }),
@@ -155,7 +159,9 @@ const ProvidersUI = (() => {
   const checkHealth = async (provider, button) => {
     if (button) button.disabled = true;
     if (button) button.textContent = 'Проверяю…';
-    const res = await Native.api('providers.verify', { providerId: provider.id });
+    const res = await Native.api('providers.verify', {
+      providerId: provider.id, fetchList: true,
+    });
     if (button) {
       button.disabled = false;
       button.textContent = 'Проверить';
@@ -170,6 +176,27 @@ const ProvidersUI = (() => {
     await load();
     Render.closeSheet();
     openVerifyReport(provider, working, rejected, res.total || (working.length + rejected.length));
+  };
+
+  /** Быстрая загрузка списка моделей одного провайдера (без проверки каждой модели). */
+  const loadProviderModels = async (provider, button) => {
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Загружаю…';
+    }
+    const res = await Native.api('models.forProvider', { providerId: provider.id });
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Модели';
+    }
+    if (!res || !res.ok) {
+      Render.toast((res && res.error) || 'Не удалось получить модели');
+      return;
+    }
+    S.models = res.models || S.models;
+    await load();
+    Render.closeSheet();
+    openModelSheet();
   };
 
   const reasonText = (reason, code) => {
@@ -271,11 +298,14 @@ const ProvidersUI = (() => {
     const reportByModel = new Map();
     let verified = false;
 
-    const renderReport = (working, rejected, total) => {
+    let unverifiedModels = [];
+
+    const renderReport = (working, rejected, total, unverified) => {
       U.clear(probe);
       verified = true;
       picked.clear();
       reportByModel.clear();
+      unverifiedModels = unverified || [];
       probe.appendChild(U.el('div', { class: 'verify-summary' }, [
         U.el('span', { class: 'verify-ok', text: working.length + ' работают' }),
         rejected.length
@@ -306,9 +336,69 @@ const ProvidersUI = (() => {
           ]));
         });
       }
+      if (unverified.length) {
+        probe.appendChild(U.el('div', { class: 'verify-title', text: 'Ещё не проверены' }));
+        unverified.forEach((id) => {
+          probe.appendChild(U.el('label', { class: 'probe-model pending' }, [
+            U.el('span', { class: 'verify-dot idle' }),
+            U.el('span', { class: 'probe-name', text: id }),
+          ]));
+        });
+        probe.appendChild(U.el('button', {
+          class: 'btn small', text: 'Проверить остальные (' + unverified.length + ')',
+          onclick: async (ev) => {
+            const btn = ev.currentTarget;
+            btn.disabled = true;
+            btn.textContent = 'Проверяю…';
+            const more = await Native.api('providers.verify', {
+              providerId: fields.id.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''),
+              models: unverified.slice(0, 24),
+            });
+            btn.disabled = false;
+            btn.textContent = 'Проверить остальные';
+            if (more && more.ok) {
+              renderReport(
+                working.concat(more.working || []),
+                rejected.concat(more.rejected || []),
+                total,
+                unverified.slice(24).concat(more.unverified || [])
+              );
+              await load();
+            } else {
+              Render.toast((more && more.error) || 'Не удалось проверить');
+            }
+          },
+        }));
+      }
     };
 
     let checking = false;
+    const rowById = new Map();
+
+    const markRow = (modelId, verdict) => {
+      const row = rowById.get(modelId);
+      if (!row) return;
+      U.clear(row);
+      if (verdict.ok) {
+        row.className = 'probe-model ok';
+        row.appendChild(U.el('span', { class: 'verify-dot ok' }));
+        row.appendChild(U.el('span', { class: 'probe-name', text: modelId }));
+      } else {
+        row.className = 'probe-model bad';
+        row.appendChild(U.el('span', { class: 'verify-dot bad' }));
+        row.appendChild(U.el('span', { class: 'probe-name', text: modelId }));
+        row.appendChild(U.el('span', {
+          class: 'probe-reason', text: reasonText(verdict.reason, verdict.code),
+        }));
+      }
+    };
+
+    let counter = null;
+    const offProgress = Native.on('models.verify.progress', (payload) => {
+      if (!payload || !checking) return;
+      markRow(payload.id, payload);
+      if (counter) counter.textContent = payload.index + ' из ' + payload.total;
+    });
 
     const probeButton = U.el('button', {
       class: 'btn', text: 'Проверить модели',
@@ -331,11 +421,11 @@ const ProvidersUI = (() => {
         probeButton.disabled = true;
         probeButton.textContent = 'Проверяю…';
         U.clear(probe);
-        const progress = U.el('div', { class: 'probe-row' }, [
+        const status = U.el('div', { class: 'probe-row' }, [
           U.el('span', { class: 'spinner tiny' }),
           U.el('span', { text: 'Получаю список моделей…' }),
         ]);
-        probe.appendChild(progress);
+        probe.appendChild(status);
 
         const saved = await Native.api('providers.add', {
           id, name: fields.name.value.trim() || id, baseUrl,
@@ -363,62 +453,55 @@ const ProvidersUI = (() => {
           U.clear(probe);
           probe.appendChild(U.el('p', {
             class: 'muted small',
-            text: 'Провайдер не вернул список моделей. Проверьте Base URL и ключ.',
+            text: (list && list.error) || 'Провайдер не вернул список моделей. Проверьте Base URL и ключ.',
           }));
           return;
         }
 
-        // Проверяем последовательно, по одной модели: параллельные запросы
-        // сами приводят к 429 и рабочий ключ выглядит исчерпанным.
-        const working = [];
-        const rejected = [];
+        // Одна операция на весь список: без N обращений через мост.
         U.clear(probe);
-        const counter = U.el('span', { class: 'muted small', text: '0 из ' + ids.length });
+        counter = U.el('span', { class: 'muted small', text: '0 из ' + ids.length });
         probe.appendChild(U.el('div', { class: 'verify-summary' }, [
           U.el('span', { class: 'verify-ok', text: 'Проверка…' }),
           counter,
         ]));
         const rows = U.el('div', { class: 'verify-list' });
         probe.appendChild(rows);
-
-        for (let i = 0; i < ids.length; i += 1) {
-          const modelId = ids[i];
+        rowById.clear();
+        ids.forEach((modelId) => {
           const row = U.el('div', { class: 'probe-model pending' }, [
             U.el('span', { class: 'spinner tiny' }),
             U.el('span', { class: 'probe-name', text: modelId }),
           ]);
+          rowById.set(modelId, row);
           rows.appendChild(row);
-          const single = await Native.api('providers.verify', {
-            providerId: id,
-            models: [modelId],
-          });
-          const item = (single && single.ok && (single.rejected || [])[0]) || null;
-          const ok = !!(single && single.ok && (single.working || []).length);
-          if (ok) {
-            working.push(modelId);
-            U.clear(row);
-            row.className = 'probe-model ok';
-            row.appendChild(U.el('span', { class: 'verify-dot ok' }));
-            row.appendChild(U.el('span', { class: 'probe-name', text: modelId }));
-          } else {
-            const reason = item ? item.reason : 'error';
-            const code = item ? item.code : 0;
-            rejected.push({ id: modelId, reason, code });
-            U.clear(row);
-            row.className = 'probe-model bad';
-            row.appendChild(U.el('span', { class: 'verify-dot bad' }));
-            row.appendChild(U.el('span', { class: 'probe-name', text: modelId }));
-            row.appendChild(U.el('span', {
-              class: 'probe-reason', text: reasonText(reason, code),
-            }));
-          }
-          counter.textContent = (i + 1) + ' из ' + ids.length;
-        }
+        });
 
+        const single = await Native.api('providers.verify', {
+          providerId: id, models: ids, fetchList: false,
+        });
         checking = false;
         probeButton.disabled = false;
         probeButton.textContent = 'Проверить модели';
-        renderReport(working, rejected, ids.length);
+        if (!single || !single.ok) {
+          U.clear(probe);
+          probe.appendChild(U.el('p', {
+            class: 'muted small', text: (single && single.error) || 'Проверка не удалась',
+          }));
+          return;
+        }
+        const working = single.working || [];
+        const rejected = single.rejected || [];
+        const unverified = single.unverified || [];
+        // Помечаем строки, по которым не пришло событие прогресса.
+        ids.forEach((modelId) => {
+          const row = rowById.get(modelId);
+          if (row && row.classList.contains('pending')) {
+            const bad = rejected.find((r) => r.id === modelId);
+            markRow(modelId, bad || { ok: true });
+          }
+        });
+        renderReport(working, rejected, ids.length, unverified);
         await load();
       },
     });
@@ -456,9 +539,7 @@ const ProvidersUI = (() => {
           Render.toast((res && res.error) || 'Не удалось сохранить провайдера');
           return;
         }
-        // В кеш попадают только проверенные рабочие модели.
-        const refreshed = await Native.api('models.refresh');
-        if (refreshed && refreshed.ok) S.models = refreshed.models || S.models;
+        // Модели уже отобраны проверкой и лежат в кеше — сеть повторно не нужна.
         await load();
         Render.closeSheet();
         Render.toast('Провайдер «' + name + '» подключён');

@@ -1622,3 +1622,9 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
 
 .verify-list { display: flex; flex-direction: column; }
 .probe-model.pending { display: flex; align-items: center; gap: 9px; opacity: 0.75; }
+
+.verify-dot.idle { background: var(--mut); }
+.probe-model.pending .spinner { opacity: 0.6; }
+
+.verify-dot.idle { background: var(--mut); opacity: 0.5; }
+.probe-model.pending { opacity: 0.8; }

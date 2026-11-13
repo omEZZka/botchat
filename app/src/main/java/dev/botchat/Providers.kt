@@ -67,7 +67,8 @@ object Providers {
 
     /** Последняя причина, по которой не удалось получить список моделей. */
     @Volatile
-    private var lastModelsError: String = ""
+    var lastModelsError: String = ""
+        private set
 
     /** Временные заголовки для «прозвона» ещё не сохранённого провайдера. */
     private val probeHeaders = ConcurrentHashMap<String, Map<String, String>>()

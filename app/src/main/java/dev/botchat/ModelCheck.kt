@@ -3,91 +3,193 @@ package dev.botchat
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Проверка моделей коротким запросом.
+ * Проверка моделей коротким запросом — быстро, но без «залпа», который
+ * сам вызывает 429.
  *
- * Важно: проверка идёт строго последовательно с паузами. Параллельный «залп»
- * из десятков запросов сам вызывает 429 у провайдера, и рабочий ключ
- * выглядит как исчерпанный.
+ * Схема: небольшой пул (3 потока) + общий ограничитель частоты (один запрос
+ * каждые ~220 мс). Если провайдер просит подождать — пул ставится на паузу
+ * целиком (общий `pauseUntil`), а не отдельные ветки. Признак лимита аккаунта
+ * прекращает проверку остальных моделей.
  */
 object ModelCheck {
 
     private const val PROMPT = "ping"
     private const val MAX_TOKENS = 4
-    private const val TIMEOUT_MS = 20_000L
-    private const val GAP_MS = 350L
+    private const val MIN_GAP_MS = 220L
+    private const val WORKERS = 3
+    private const val RETRY_WAIT_CAP_MS = 10_000L
+    private const val TOTAL_BUDGET_MS = 90_000L
 
-    private val pool = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "ModelCheck").apply { isDaemon = true }
-    }
     private val running = AtomicBoolean(false)
 
     data class Verdict(val ok: Boolean, val reason: String, val code: Int, val detail: String = "")
 
     fun isRunning(): Boolean = running.get()
 
-    /**
-     * Проверяет модели по одной. `onProgress` вызывается после каждой,
-     * чтобы UI мог показывать живой список.
-     */
+    private fun progress(index: Int, total: Int, id: String, verdict: Verdict) {
+        runCatching {
+            val host = MainActivity.host() ?: return
+            host.emit(
+                "models.verify.progress",
+                JSONObject()
+                    .put("index", index)
+                    .put("total", total)
+                    .put("id", id)
+                    .put("ok", verdict.ok)
+                    .put("reason", verdict.reason)
+                    .put("code", verdict.code)
+                    .put("detail", verdict.detail.take(300))
+            )
+        }
+    }
+
     fun checkProvider(
         context: Context,
         provider: Providers.Provider,
-        models: List<String>,
-        onProgress: (checked: Int, total: Int, id: String, verdict: Verdict) -> Unit
+        models: List<String>
     ): JSONObject {
         val keys = Secrets.keyRing(context, provider.id)
         if (provider.needsKey && keys.isEmpty()) {
             return JSONObject().put("ok", false).put("error", "Нет ключа провайдера")
         }
         running.set(true)
-        val results = ArrayList<JSONObject>()
-        try {
-            models.forEachIndexed { index, modelId ->
-                val verdict = verifyOne(context, provider, keys, modelId)
-                val item = JSONObject()
-                    .put("id", modelId)
-                    .put("ok", verdict.ok)
-                    .put("reason", verdict.reason)
-                    .put("code", verdict.code)
-                    .put("detail", verdict.detail)
-                results.add(item)
-                runCatching { onProgress(index + 1, models.size, modelId, verdict) }
+        val results = arrayOfNulls<JSONObject>(models.size)
+        val done = java.util.concurrent.atomic.AtomicInteger(0)
+        val pauseUntil = AtomicLong(0L)
+        val accountBlocked = AtomicBoolean(false)
+        val latch = CountDownLatch(models.size)
+        val deadline = System.currentTimeMillis() + TOTAL_BUDGET_MS
+        val gate = Any()
 
-                if (verdict.ok) {
-                    Quota.clear(context, provider.id, modelId)
-                } else {
-                    when (verdict.reason) {
-                        "account_limit" -> Quota.markAccountLimited(context, provider.id, 5 * 60_000L)
-                        // Временная перегрузка не должна скрывать рабочую модель надолго.
-                        "rate_limit" -> Quota.markLimited(
-                            context,
-                            provider.id,
-                            modelId,
-                            if (verdict.detail.contains("не выполнялся", ignoreCase = true)) 20_000L else 60_000L
-                        )
-                        "no_access" -> Quota.clear(context, provider.id, modelId)
-                        else -> Unit
+        fun waitForSlot() {
+            while (true) {
+                if (System.currentTimeMillis() > deadline) return
+                val pause = pauseUntil.get()
+                val now = System.currentTimeMillis()
+                if (pause > now) {
+                    Thread.sleep((pause - now).coerceAtMost(1_000L))
+                    continue
+                }
+                synchronized(gate) {
+                    val next = nextSlotAt
+                    val t = System.currentTimeMillis()
+                    if (t >= next) {
+                        nextSlotAt = t + MIN_GAP_MS
+                        return
                     }
                 }
-                if (index < models.size - 1) Thread.sleep(GAP_MS)
+                Thread.sleep(30)
             }
+        }
+
+        val pool = Executors.newFixedThreadPool(WORKERS) { r ->
+            Thread(r, "ModelCheck").apply { isDaemon = true }
+        }
+
+        try {
+            models.forEachIndexed { index, modelId ->
+                pool.execute {
+                    try {
+                        if (accountBlocked.get()) {
+                            results[index] = rejected(modelId, "account_limit", 0, "пропущено: лимит аккаунта")
+                            return@execute
+                        }
+                        val knownWait = Quota.remaining(context, provider.id, modelId)
+                        if (knownWait > 0) {
+                            results[index] = rejected(
+                                modelId, "rate_limit", 429,
+                                "пауза ещё " + (knownWait / 1000) + " с"
+                            )
+                            progress(done.incrementAndGet(), models.size, modelId, Verdict(false, "rate_limit", 429))
+                            return@execute
+                        }
+                        waitForSlot()
+                        if (System.currentTimeMillis() > deadline) {
+                            results[index] = rejected(modelId, "rate_limit", 429, "превышен бюджет проверки")
+                            return@execute
+                        }
+
+                        var verdict = probeModel(context, provider, keys, modelId)
+
+                        // Временная перегрузка канала: пауза для всего пула и один повтор.
+                        if (!verdict.ok && verdict.reason == "rate_limit") {
+                            val wait = waitHint(verdict.detail).coerceAtMost(RETRY_WAIT_CAP_MS)
+                            pauseUntil.set(System.currentTimeMillis() + wait)
+                            Thread.sleep(wait)
+                            verdict = probeModel(context, provider, keys, modelId)
+                        }
+
+                        results[index] = JSONObject()
+                            .put("id", modelId)
+                            .put("ok", verdict.ok)
+                            .put("reason", verdict.reason)
+                            .put("code", verdict.code)
+                            .put("detail", verdict.detail)
+
+                        when {
+                            verdict.ok -> Quota.clear(context, provider.id, modelId)
+                            verdict.reason == "account_limit" -> {
+                                Quota.markAccountLimited(context, provider.id, 5 * 60_000L)
+                                accountBlocked.set(true)
+                            }
+                            verdict.reason == "rate_limit" -> Quota.markLimited(
+                                context,
+                                provider.id,
+                                modelId,
+                                if (verdict.detail.contains("не выполнялся", ignoreCase = true)) 15_000L else 30_000L
+                            )
+                            else -> Unit
+                        }
+                        progress(done.incrementAndGet(), models.size, modelId, verdict)
+                    } catch (t: Throwable) {
+                        results[index] = rejected(modelId, "error", 0, t.message ?: "ошибка")
+                    } finally {
+                        latch.countDown()
+                    }
+                }
+            }
+            latch.await(TOTAL_BUDGET_MS + 10_000L, TimeUnit.MILLISECONDS)
         } finally {
+            pool.shutdownNow()
             running.set(false)
         }
+
         val arr = JSONArray()
-        results.forEach { arr.put(it) }
-        return JSONObject().put("ok", true).put("results", arr)
+        var blocked = false
+        models.forEachIndexed { index, modelId ->
+            val item = results[index] ?: rejected(modelId, "rate_limit", 0, "не проверялась")
+            if (!item.optBoolean("ok") && item.optString("reason") == "account_limit") blocked = true
+            arr.put(item)
+        }
+        return JSONObject()
+            .put("ok", true)
+            .put("results", arr)
+            .put("accountBlocked", blocked)
     }
 
-    /**
-     * Одна модель: до двух попыток при явном rate limit и с паузой из `Retry-After`.
-     */
-    private fun verifyOne(
+    private fun rejected(id: String, reason: String, code: Int, detail: String): JSONObject =
+        JSONObject().put("id", id).put("ok", false).put("reason", reason).put("code", code).put("detail", detail)
+
+    @Volatile
+    private var nextSlotAt: Long = 0L
+
+    private fun waitHint(detail: String): Long {
+        val hinted = Net.retryHintFromBody(detail)
+        return when {
+            hinted > 0 -> hinted
+            detail.contains("не выполнялся", ignoreCase = true) -> 5_000L
+            else -> 2_000L
+        }
+    }
+
+    private fun probeModel(
         context: Context,
         provider: Providers.Provider,
         keys: List<String>,
@@ -96,33 +198,16 @@ object ModelCheck {
         val attemptKeys: List<String?> = if (keys.isEmpty()) listOf(null) else keys
         var last = Verdict(false, "no_answer", 0)
         for (key in attemptKeys) {
-            last = probeModel(context, provider, key, modelId)
+            last = probeOnce(context, provider, key, modelId)
             if (last.ok) return last
-            if (last.reason == "rate_limit") {
-                // Провайдер просит подождать: уважаем подсказку и делаем ещё одну попытку.
-                val hinted = Net.retryHintFromBody(last.detail)
-                val wait = when {
-                    hinted > 0 -> hinted.coerceIn(1_000L, 20_000L)
-                    last.detail.contains("не выполнялся", ignoreCase = true) -> 8_000L
-                    else -> 3_000L
-                }
-                Thread.sleep(wait)
-                last = probeModel(context, provider, key, modelId)
-                if (last.ok) return last
-                // Вторая пауза — на случай «5-10 секунд» из тела ошибки.
-                if (last.reason == "rate_limit") {
-                    Thread.sleep(wait.coerceAtMost(10_000L))
-                    last = probeModel(context, provider, key, modelId)
-                    if (last.ok) return last
-                }
-            }
-            // Проверка не переключает активный ключ: это делает только чат при реальной работе.
             if (last.reason != "rate_limit") return last
+            if (key != null && attemptKeys.size > 1) continue
+            return last
         }
         return last
     }
 
-    private fun probeModel(
+    private fun probeOnce(
         context: Context,
         provider: Providers.Provider,
         key: String?,
