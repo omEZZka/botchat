@@ -62,11 +62,38 @@ const Render = (() => {
     return { render, enhance };
   })();
 
-  const avatar = (name, color, size) => {
-    const el = U.el('span', {
-      class: 'avatar c' + (color == null ? U.colorIndex(name) : color) + (size ? ' s' + size : ''),
-    }, U.initials(name));
+  /**
+   * Аватар: своя иконка + цвет, либо инициалы с цветом из палитры.
+   * Настройки хранятся в записи чата (avatar / avatarFilled / accent).
+   */
+  const avatar = (name, color, size, chat) => {
+    const src = chat || null;
+    const iconName = src && src.avatar && window.Avatars && Avatars.has(src.avatar) ? src.avatar : '';
+    const accent = (src && src.accent) || '';
+    const classes = ['avatar'];
+    if (size) classes.push('s' + size);
+    if (accent) classes.push('custom-color');
+    else classes.push('c' + (color == null ? U.colorIndex(name) : color));
+    const el = U.el('span', { class: classes.join(' ') });
+    if (accent) {
+      el.style.background = accent;
+      el.style.color = pickTextColor(accent);
+    }
+    if (iconName) {
+      el.classList.add('icon-avatar');
+      el.innerHTML = Avatars.svg(iconName, { size: size === 0 ? 26 : 22, filled: !!(src && src.avatarFilled) });
+      el.setAttribute('aria-label', name || '');
+    } else {
+      el.textContent = U.initials(name);
+    }
     return el;
+  };
+
+  const pickTextColor = (hex) => {
+    const rgb = window.Appearance ? Appearance.parseHex(hex) : null;
+    if (!rgb) return '#0a0d13';
+    const lum = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+    return lum > 0.62 ? '#0a0d13' : '#ffffff';
   };
 
   const iconButton = (name, title, onClick, extra) => {
@@ -260,10 +287,18 @@ const Render = (() => {
     return Avatars.svg(icon.name, { size: size || 22, filled: icon.filled });
   };
 
-  const listHeader = () => U.el('header', { class: 'topbar' }, [
+  const listHeader = () => U.el('header', { class: 'topbar list-top' }, [
     U.el('div', { class: 'brand' }, [
-      U.el('span', { class: 'brand-mark', html: appIcon(22) }),
-      U.el('span', { class: 'brand-name', text: 'botCHAT' }),
+      U.el('span', { class: 'brand-mark', html: appIcon(26) }),
+      U.el('div', { class: 'brand-text' }, [
+        U.el('span', { class: 'brand-name', text: 'botCHAT' }),
+        U.el('span', {
+          class: 'brand-sub',
+          text: Store.messages(S.chatId || '').length
+            ? (S.chats.filter((c) => !c.archived).length + ' ' + U.plural(S.chats.filter((c) => !c.archived).length, 'чат', 'чата', 'чатов'))
+            : 'мессенджер с ИИ',
+        }),
+      ]),
     ]),
     U.el('div', { class: 'topbar-actions' }, [
       iconButton('search', 'Поиск', () => Actions.go('search')),
@@ -331,7 +366,6 @@ const Render = (() => {
       list.appendChild(fab);
     }
     view.appendChild(list);
-    bindSwipeRows(view);
   };
 
   const chatRow = (chat) => {
@@ -361,7 +395,7 @@ const Render = (() => {
             html: selected ? Icons.html('check', 14) : '',
           })
           : null,
-        avatar(chat.title, chat.color, 0),
+        avatar(chat.title, chat.color, 0, chat),
         chat.pinned && !selecting ? U.el('span', { class: 'pin-mark', html: Icons.html('pin', 10) }) : null,
       ]),
       U.el('div', { class: 'chat-row-main' }, [
@@ -379,21 +413,21 @@ const Render = (() => {
       ]),
     ]);
     row.appendChild(inner);
-    if (!selecting) row.appendChild(U.el('div', { class: 'swipe-actions' }, [
-      U.el('button', {
-        class: 'swipe-btn pin', type: 'button', 'aria-label': 'Закрепить',
-        onclick: (ev) => { ev.stopPropagation(); Actions.togglePin(chat.id); },
-      }, Icons.make('pin', 18)),
-      U.el('button', {
-        class: 'swipe-btn archive', type: 'button', 'aria-label': 'Архив',
-        onclick: (ev) => { ev.stopPropagation(); Actions.toggleArchive(chat.id); },
-      }, Icons.make('archive', 18)),
-      U.el('button', {
-        class: 'swipe-btn trash', type: 'button', 'aria-label': 'Удалить',
-        onclick: (ev) => { ev.stopPropagation(); Actions.confirmDelete(chat.id); },
-      }, Icons.make('trash', 18)),
-    ]));
     SelectMode.bindRow(row, chat);
+    // Аватар открывает карточку чата: модель, аватар, цвет.
+    const avatarWrap = inner.querySelector('.avatar-wrap');
+    if (avatarWrap) {
+      avatarWrap.classList.add('tappable');
+      avatarWrap.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (SelectMode.isActive()) {
+          SelectMode.toggle(chat.id);
+          return;
+        }
+        Actions.openChatCard(chat.id);
+      });
+    }
     return row;
   };
 
@@ -401,50 +435,6 @@ const Render = (() => {
     if (chat.draft) return t('chats.draft') + ': ' + chat.draft;
     if (chat.status === 'running') return t('chats.agentWorking');
     return chat.preview || t('chats.noMessages');
-  };
-
-  const bindSwipeRows = (root) => {
-    if (SelectMode.isActive()) return;
-    U.$$('.chat-row', root).forEach((row) => {
-      let startX = 0;
-      let startY = 0;
-      let dragging = false;
-      let dx = 0;
-      row.addEventListener('touchstart', (ev) => {
-        const t = ev.touches[0];
-        startX = t.clientX;
-        startY = t.clientY;
-        dragging = false;
-        dx = 0;
-      }, { passive: true });
-      row.addEventListener('touchmove', (ev) => {
-        const t = ev.touches[0];
-        const mx = t.clientX - startX;
-        const my = t.clientY - startY;
-        if (!dragging && Math.abs(mx) > 12 && Math.abs(mx) > Math.abs(my)) dragging = true;
-        if (!dragging) return;
-        dx = U.clamp(mx, -168, 0);
-        const inner = row.querySelector('.chat-row-inner');
-        if (inner) inner.style.transform = 'translateX(' + dx + 'px)';
-      }, { passive: true });
-      row.addEventListener('touchend', () => {
-        if (!dragging) return;
-        dragging = false;
-        const inner = row.querySelector('.chat-row-inner');
-        if (inner) {
-          inner.style.transition = 'transform 160ms ease';
-          inner.style.transform = dx < -72 ? 'translateX(-168px)' : '';
-          setTimeout(() => { if (inner) inner.style.transition = ''; }, 200);
-        }
-        if (dx > -20) row.classList.remove('swiped');
-      });
-      row.addEventListener('click', () => {
-        const inner = row.querySelector('.chat-row-inner');
-        if (inner && inner.style.transform && inner.style.transform.includes('-168')) {
-          inner.style.transform = '';
-        }
-      });
-    });
   };
 
   const renderChat = (view) => {
@@ -463,13 +453,14 @@ const Render = (() => {
       const header = U.el('header', { class: 'topbar chat-top' });
       header.appendChild(iconButton('back', 'Назад', () => Actions.back()));
       header.appendChild(U.el('div', { class: 'chat-head-main', onclick: () => Actions.openChatSheet() }, [
-        avatar(chat.title, chat.color, 1),
+        avatar(chat.title, chat.color, 1, chat),
         U.el('div', { class: 'chat-head-content' }, [
           U.el('span', { class: 'chat-head-title', text: chat.title }),
           U.el('span', { class: 'chat-head-sub', id: 'chat-sub', text: chatSub(chat) }),
         ]),
       ]));
       header.appendChild(U.el('div', { class: 'topbar-actions' }, [
+        iconButton('mic', 'Позвонить', () => CallMode.open(chat.id)),
         iconButton('model', 'Модель', () => Actions.openModelSheet()),
         iconButton('more', 'Ещё', () => Actions.openChatMenu()),
       ]));
@@ -994,7 +985,7 @@ const Render = (() => {
       const hits = Store.messageHits(chat.id, q).slice(-3).reverse();
       const block = U.el('div', { class: 'search-group' }, [
         U.el('div', { class: 'search-chat', onclick: () => Actions.openChatAt(chat.id, hits[0]) }, [
-          avatar(chat.title, chat.color, 2),
+          avatar(chat.title, chat.color, 2, chat),
           U.el('div', { class: 'search-chat-main' }, [
             U.el('span', { class: 'search-chat-title', text: chat.title }),
             U.el('span', { class: 'search-chat-count', text: count + ' ' + I18n.plural(count, 'search.matches') }),

@@ -131,6 +131,7 @@ const Agent = (() => {
       Store.setAgent({ running: false, phase: 'idle', label: '', paused: false });
       await Store.updateMessage(chatId, assistantMsg.id, { streaming: false, status: 'done' }, { silent: true });
       await Store.touchChat(chatId, { status: 'idle' });
+      await autoTitle(chatId);
       AgentServiceKeepAlive(false, chatId);
       Bus.emit('render');
     }
@@ -153,6 +154,36 @@ const Agent = (() => {
       if (!chain.some((c) => c.provider === item.provider && c.id === item.id)) chain.push(item);
     }
     return chain.filter((c) => !(c.provider === providerId && c.id === modelId));
+  };
+
+  /**
+   * Автоназвание сессии: если чат ещё «Новый чат», берём смысл первого
+   * сообщения пользователя и имя модели. Название не перезаписывается,
+   * если пользователь задал своё.
+   */
+  const autoTitle = async (chatId) => {
+    const chat = Store.getChat(chatId);
+    if (!chat) return;
+    const generic = !chat.title || chat.title === 'Новый чат' || chat.title.trim() === '';
+    if (!generic || chat.titleLocked) return;
+    const list = Store.messages(chatId) || [];
+    const firstUser = list.find((m) => m.role === 'user' && (m.text || '').trim());
+    if (!firstUser) return;
+    const model = chat.model || S.settings.activeModel || '';
+    const raw = String(firstUser.text).replace(/\s+/g, ' ').trim();
+    const words = raw.split(' ').slice(0, 6).join(' ');
+    const short = words.length > 42 ? words.slice(0, 42).trim() + '…' : words;
+    const provider = (S.providers || []).find((p) => p.id === (chat.provider || S.settings.activeProvider));
+    const modelShort = model ? (model.length > 18 ? model.slice(0, 18) + '…' : model) : '';
+    let title = short ? short.charAt(0).toUpperCase() + short.slice(1) : '';
+    // Совсем короткие реплики («привет») плохо годятся в название — добавляем модель.
+    if (!title || title.split(' ').length < 2) {
+      const base = title || (provider ? provider.name : 'Чат');
+      title = base + (modelShort ? ' · ' + modelShort : '');
+    }
+    await Store.touchChat(chatId, { title });
+    Bus.emit('chats:changed', S.chats);
+    Bus.emit('render');
   };
 
   const lastAssistantText = (chatId) => {
@@ -705,7 +736,7 @@ const Agent = (() => {
 
   return {
     send, run, stop, togglePause, flushQueue, continueGeneration, regenerate,
-    executeTool, cancelActive, contextUsage, isSmallTalk, needsTools,
+    executeTool, cancelActive, contextUsage, isSmallTalk, needsTools, autoTitle,
     systemPrompt, buildContext,
     get active() { return active; },
   };

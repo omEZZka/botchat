@@ -63,6 +63,7 @@ class MainActivity : Activity(), BridgeHost {
     private val REQ_FILES = 1001
     private val REQ_IMAGE = 1002
     private val REQ_NOTIFY = 1003
+    private val REQ_MIC = 1004
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -395,6 +396,19 @@ class MainActivity : Activity(), BridgeHost {
         pendingPick = null
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_MIC) {
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            emit("voice.permission", JSONObject().put("granted", granted))
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
@@ -602,6 +616,16 @@ class MainActivity : Activity(), BridgeHost {
                     "pick" -> pick(payload.optString("kind"))
                     "env" -> env()
                     "export.text" -> exportText(payload.optString("name"), payload.optString("text"))
+                    "mic.request" -> {
+                        runOnUiThread {
+                            if (Voice.hasPermission(this@MainActivity)) {
+                                emit("voice.permission", JSONObject().put("granted", true))
+                            } else {
+                                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+                            }
+                        }
+                        ok()
+                    }
                     "settings.overlay" -> {
                         runOnUiThread {
                             runCatching {

@@ -13,6 +13,7 @@ object Api {
 
     /** Операции с сетью: выполняются вне JS-потока, чтобы WebView не подвисал. */
     private val NETWORK_OPS = setOf(
+        "voice.transcribe",
         "providers.probe",
         "providers.health",
         "models.refresh",
@@ -51,6 +52,47 @@ object Api {
             )
             "keys.wipe" -> {
                 Secrets.wipe(context, payload.optString("providerId"))
+                JSONObject().put("ok", true)
+            }
+            "voice.start" -> Voice.start(context, payload.optString("chatId"))
+            "voice.stop" -> Voice.stop()
+            "voice.cancel" -> {
+                Voice.cancel()
+                JSONObject().put("ok", true)
+            }
+            "voice.state" -> JSONObject()
+                .put("ok", true)
+                .put("recording", Voice.isRecording())
+                .put("level", Voice.level())
+                .put("elapsedMs", Voice.elapsedMs())
+            "voice.transcribe" -> Voice.transcribe(
+                context,
+                payload.optString("path"),
+                payload.optString("model")
+            )
+            "speech.speak" -> {
+                Speech.init(context)
+                Speech.speak(payload.optString("text"))
+            }
+            "speech.stop" -> Speech.stop()
+            "speech.state" -> JSONObject()
+                .put("ok", true)
+                .put("speaking", Speech.isSpeaking())
+            "voice.sttInfo" -> {
+                val providerId = Settings.sttProviderId() ?: ""
+                JSONObject()
+                    .put("ok", true)
+                    .put("providerId", providerId)
+                    .put("model", Settings.sttModel() ?: "")
+                    .put("models", Voice.sttModels(providerId.ifBlank { "openai" }))
+            }
+            "voice.setStt" -> {
+                if (payload.optString("providerId").isNotBlank()) {
+                    Settings.setSttProviderId(payload.optString("providerId"))
+                }
+                if (payload.optString("model").isNotBlank()) {
+                    Settings.setSttModel(payload.optString("model"))
+                }
                 JSONObject().put("ok", true)
             }
             "models.refresh" -> Models.refresh(context)

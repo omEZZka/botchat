@@ -4,8 +4,220 @@
  * Шторки выбора: модель, провайдер, настройки чата, приложения, экспорт.
  */
 const Pickers = (() => {
-  const chatSettings = () => {
-    const chat = Store.getChat(S.chatId);
+  /**
+   * Карточка чата: то, что открывается тапом по аватарке в списке.
+   * Название, модель именно этого чата, аватар, цвет и параметры агента.
+   */
+  const openChatCard = (chatId) => {
+    const chat = Store.getChat(chatId || S.chatId);
+    if (!chat) return;
+    const draft = {
+      title: chat.title,
+      avatar: chat.avatar || '',
+      avatarFilled: !!chat.avatarFilled,
+      accent: chat.accent || '',
+      provider: chat.provider || '',
+      model: chat.model || '',
+    };
+
+    const content = U.el('div', { class: 'chat-card' });
+
+    // --- превью ---
+    const previewRow = U.el('div', { class: 'chat-card-head' });
+    const renderPreview = () => {
+      U.clear(previewRow);
+      previewRow.appendChild(Render.avatar(draft.title, chat.color, 2, draft));
+      const meta = U.el('div', { class: 'chat-card-meta' }, [
+        U.el('span', { class: 'chat-card-title', text: draft.title }),
+        U.el('span', {
+          class: 'chat-card-sub',
+          text: modelLabel(draft.provider, draft.model) || 'модель не выбрана',
+        }),
+      ]);
+      previewRow.appendChild(meta);
+    };
+    content.appendChild(previewRow);
+
+    // --- название ---
+    const titleInput = U.el('input', {
+      class: 'field',
+      value: chat.title,
+      placeholder: 'Название чата',
+      oninput: () => { draft.title = titleInput.value; renderPreview(); },
+    });
+    content.appendChild(U.el('label', { class: 'field-group' }, [
+      U.el('span', { class: 'field-label', text: 'Название' }),
+      titleInput,
+    ]));
+
+    // --- модель этого чата ---
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Модель чата' }));
+    const currentModel = U.el('div', { class: 'chat-card-current' }, [
+      Icons.make('model', 16),
+      U.el('span', { text: modelLabel(draft.provider, draft.model) || 'выбрать модель' }),
+    ]);
+    content.appendChild(currentModel);
+    content.appendChild(U.el('button', {
+      class: 'btn', text: 'Выбрать модель для этого чата',
+      onclick: () => {
+        Render.closeSheet();
+        ProvidersUI.openModelSheet();
+      },
+    }));
+
+    // --- аватар ---
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Аватар' }));
+    const iconGrid = U.el('div', { class: 'icon-grid chat-icon-grid' });
+    const resetCell = U.el('button', {
+      class: 'icon-cell' + (!draft.avatar ? ' active' : ''), type: 'button',
+      'aria-label': 'Инициалы',
+      onclick: () => {
+        draft.avatar = '';
+        U.$$('.icon-cell', iconGrid).forEach((n) => n.classList.remove('active'));
+        resetCell.classList.add('active');
+        renderPreview();
+      },
+    }, U.el('span', { class: 'icon-cell-text', text: 'Аа' }));
+    iconGrid.appendChild(resetCell);
+    Avatars.ids.forEach((name) => {
+      [false, true].forEach((filled) => {
+        const cell = U.el('button', {
+          class: 'icon-cell' + (draft.avatar === name && draft.avatarFilled === filled ? ' active' : ''),
+          type: 'button',
+          'aria-label': name + (filled ? ' заливка' : ' контур'),
+          onclick: () => {
+            draft.avatar = name;
+            draft.avatarFilled = filled;
+            U.$$('.icon-cell', iconGrid).forEach((n) => n.classList.remove('active'));
+            cell.classList.add('active');
+            renderPreview();
+          },
+        });
+        cell.innerHTML = Avatars.svg(name, { size: 22, filled });
+        iconGrid.appendChild(cell);
+      });
+    });
+    content.appendChild(iconGrid);
+
+    // --- цвет ---
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Цвет' }));
+    const palette = U.el('div', { class: 'palette' });
+    const resetColor = U.el('button', {
+      class: 'palette-dot reset', type: 'button', title: 'Как у остальных',
+      onclick: () => {
+        draft.accent = '';
+        U.$$('.palette-dot', palette).forEach((n) => n.classList.remove('active'));
+        resetColor.classList.add('active');
+        renderPreview();
+      },
+    });
+    palette.appendChild(resetColor);
+    Appearance.PRESETS.forEach((preset) => {
+      const dot = U.el('button', {
+        class: 'palette-dot' + (draft.accent === preset.acc ? ' active' : ''),
+        type: 'button', title: preset.name,
+        style: 'background:' + preset.acc,
+        'aria-label': preset.name,
+        onclick: () => {
+          draft.accent = preset.acc;
+          U.$$('.palette-dot', palette).forEach((n) => n.classList.remove('active'));
+          dot.classList.add('active');
+          renderPreview();
+        },
+      });
+      palette.appendChild(dot);
+    });
+    content.appendChild(palette);
+
+    const customColor = U.el('input', {
+      class: 'field mono-input', type: 'text',
+      value: draft.accent || '', placeholder: '#RRGGBB', spellcheck: 'false',
+    });
+    content.appendChild(U.el('div', { class: 'slider-row' }, [
+      U.el('span', { class: 'slider-label', text: 'Свой цвет' }),
+      customColor,
+      U.el('button', {
+        class: 'link-btn', text: 'Применить',
+        onclick: () => {
+          const hex = customColor.value.trim();
+          if (!Appearance.parseHex(hex)) {
+            Render.toast('Нужен формат #RRGGBB');
+            return;
+          }
+          draft.accent = hex;
+          U.$$('.palette-dot', palette).forEach((n) => n.classList.remove('active'));
+          renderPreview();
+        },
+      }),
+    ]));
+
+    // --- действия ---
+    content.appendChild(U.el('h3', { class: 'section-title', text: 'Действия' }));
+    content.appendChild(U.el('div', { class: 'chat-card-actions' }, [
+      U.el('button', {
+        class: 'btn small', text: chat.pinned ? 'Открепить' : 'Закрепить',
+        onclick: async () => {
+          await Store.togglePin(chat.id);
+          Render.closeSheet();
+        },
+      }),
+      U.el('button', {
+        class: 'btn small', text: chat.archived ? 'Вернуть из архива' : 'В архив',
+        onclick: async () => {
+          await Store.toggleArchive(chat.id);
+          Render.closeSheet();
+        },
+      }),
+      U.el('button', {
+        class: 'btn small', text: 'Параметры',
+        onclick: () => {
+          Render.closeSheet();
+          chatSettings(chat.id);
+        },
+      }),
+      U.el('button', {
+        class: 'btn small danger-ghost', text: 'Удалить',
+        onclick: () => {
+          Render.closeSheet();
+          Actions.confirmDelete(chat.id);
+        },
+      }),
+    ]));
+
+    const save = U.el('button', {
+      class: 'btn primary full', text: 'Сохранить',
+      onclick: async () => {
+        save.disabled = true;
+        await Store.touchChat(chat.id, {
+          title: draft.title.trim() || chat.title,
+          avatar: draft.avatar,
+          avatarFilled: draft.avatarFilled,
+          accent: draft.accent,
+          color: draft.accent ? chat.color : U.colorIndex(draft.title),
+        });
+        save.disabled = false;
+        Render.closeSheet();
+        Render.toast('Чат обновлён');
+      },
+    });
+    content.appendChild(save);
+
+    renderPreview();
+    Render.openSheet({ title: 'Чат', content, full: true });
+
+    // Если модель выбрали через шторку моделей, карточка открывается заново с новыми данными.
+    const off = Bus.on('chat:open', () => off());
+    return off;
+  };
+
+  const modelLabel = (providerId, modelId) => {
+    if (!modelId) return '';
+    const provider = (S.providers || []).find((p) => p.id === providerId);
+    return (provider ? provider.name + ' · ' : '') + modelId;
+  };
+
+  const chatSettings = (chatId) => {
+    const chat = Store.getChat(chatId || S.chatId);
     if (!chat) return;
     const folderInput = U.el('input', { class: 'field', value: chat.projectFolder || '', placeholder: 'projects/my-app' });
     const limitInput = U.el('input', { class: 'field', type: 'number', min: '1', max: '200', value: String(chat.stepLimit || S.settings.stepLimit) });
@@ -638,7 +850,7 @@ const Pickers = (() => {
   return {
     chatSettings, appSettings, appMenu, exportSheet, exportChat, exportData,
     aboutSheet, taskGraph, openCheckpoints, toggleRow, numberRow, profilesSheet,
-    appearanceSheet,
+    appearanceSheet, openChatCard,
   };
 })();
 

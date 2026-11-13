@@ -7,7 +7,7 @@ const Composer = (() => {
   let textarea = null;
   let host = null;
   let attachments = [];
-  let recording = null;
+  let voice = { active: false, level: 0, timer: null, startedAt: 0, cancelled: false };
 
   const build = () => {
     host = U.el('div', { class: 'composer' });
@@ -32,9 +32,28 @@ const Composer = (() => {
       },
     });
 
+    const micBtn = iconButton('mic', 'Голосовой ввод', () => toggleVoiceInput());
+    micBtn.id = 'composer-mic';
     const left = U.el('div', { class: 'composer-left' }, [
       iconButton('clip', 'Вложение', () => openAttachMenu()),
-      iconButton('mic', 'Голос', () => toggleMic()),
+      micBtn,
+    ]);
+
+    const voiceStrip = U.el('div', { class: 'voice-strip', id: 'voice-strip', hidden: 'hidden' }, [
+      U.el('span', { class: 'voice-dot' }),
+      U.el('div', { class: 'voice-main' }, [
+        U.el('span', { class: 'voice-state', id: 'voice-state', text: 'Говорите…' }),
+        U.el('div', { class: 'voice-wave', id: 'voice-wave' }),
+      ]),
+      U.el('span', { class: 'voice-time', id: 'voice-time', text: '0:00' }),
+      U.el('button', {
+        class: 'ibtn', type: 'button', id: 'voice-cancel', 'aria-label': 'Отменить запись',
+        onclick: () => cancelVoice(),
+      }, Icons.make('close', 18)),
+      U.el('button', {
+        class: 'ibtn voice-send', type: 'button', id: 'voice-done', 'aria-label': 'Распознать',
+        onclick: () => stopVoice(),
+      }, Icons.make('check', 18)),
     ]);
 
     const sendBtn = U.el('button', {
@@ -44,6 +63,7 @@ const Composer = (() => {
 
     host.appendChild(replyBar);
     host.appendChild(attachRow);
+    host.appendChild(voiceStrip);
     host.appendChild(U.el('div', { class: 'composer-row' }, [
       left,
       U.el('div', { class: 'composer-field' }, [textarea, U.el('div', { class: 'composer-counters', id: 'composer-counters' })]),
@@ -198,15 +218,136 @@ const Composer = (() => {
     Render.openSheet({ title: 'Прикрепить', content });
   };
 
-  const toggleMic = () => {
-    if (recording) {
-      clearInterval(recording.timer);
-      recording = null;
-      Render.toast('Голосовой ввод недоступен в этой сборке');
+  const waveBars = (level) => {
+    const wave = U.$('#voice-wave');
+    if (!wave) return;
+    const count = 14;
+    if (wave.childElementCount !== count) {
+      U.clear(wave);
+      for (let i = 0; i < count; i += 1) wave.appendChild(U.el('span'));
+    }
+    const bars = Array.from(wave.children);
+    bars.forEach((bar, i) => {
+      const center = 1 - Math.abs(i - (count - 1) / 2) / ((count - 1) / 2);
+      const h = 3 + Math.round((level / 100) * 22 * (0.35 + center * 0.65));
+      bar.style.height = h + 'px';
+    });
+  };
+
+  const tickVoice = () => {
+    Native.api('voice.state').then((res) => {
+      if (!res || !res.ok || !voice.active) return;
+      voice.level = res.level || 0;
+      waveBars(voice.level);
+      const seconds = Math.floor((res.elapsedMs || 0) / 1000);
+      const time = U.$('#voice-time');
+      if (time) {
+        time.textContent = Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+      }
+      const state = U.$('#voice-state');
+      if (state && voice.level < 3) state.textContent = 'Говорите…';
+      else if (state) state.textContent = 'Слушаю';
+    });
+  };
+
+  const setVoiceUi = (on) => {
+    const strip = U.$('#voice-strip');
+    const input = U.$('.composer-field');
+    if (strip) strip.hidden = !on;
+    if (input) input.hidden = on;
+    const btn = U.$('#composer-mic');
+    if (btn) btn.classList.toggle('recording', on);
+    if (!on) waveBars(0);
+  };
+
+  const startVoice = async () => {
+    const perm = await Native.call('mic.request', {});
+    if (!perm || !perm.ok) {
+      Render.toast('Нет доступа к микрофону');
       return;
     }
-    Render.toast('Голосовой ввод появится в следующей версии');
+    const res = await Native.api('voice.start', { chatId: S.chatId });
+    if (!res || !res.ok) {
+      Render.toast((res && res.error) || 'Не удалось начать запись');
+      return;
+    }
+    voice = { active: true, level: 0, startedAt: Date.now(), cancelled: false, timer: null };
+    setVoiceUi(true);
+    waveBars(0);
+    voice.timer = setInterval(tickVoice, 120);
+    if (navigator.vibrate) navigator.vibrate(10);
   };
+
+  const cancelVoice = async () => {
+    if (!voice.active) return;
+    voice.cancelled = true;
+    if (voice.timer) clearInterval(voice.timer);
+    voice.active = false;
+    setVoiceUi(false);
+    await Native.api('voice.cancel', {});
+  };
+
+  const stopVoice = async () => {
+    if (!voice.active) return;
+    if (voice.timer) clearInterval(voice.timer);
+    voice.active = false;
+    setVoiceUi(false);
+    const res = await Native.api('voice.stop', {});
+    if (!res || !res.ok || !res.path) {
+      Render.toast('Запись слишком короткая');
+      return;
+    }
+    const state = U.$('#voice-state');
+    if (state) state.textContent = 'Распознаю…';
+    Render.toast('Распознаю речь…');
+    const tr = await Native.api('voice.transcribe', { path: res.path });
+    if (!tr || !tr.ok) {
+      if (tr && tr.needProvider) {
+        Render.toast((tr && tr.error) || 'Нужен ключ для распознавания');
+        speakFallbackHint();
+      } else {
+        Render.toast((tr && tr.error) || 'Не удалось распознать');
+      }
+      return;
+    }
+    insertText(tr.text || '');
+  };
+
+  const speakFallbackHint = () => {
+    Render.openSheet({
+      title: 'Распознавание речи',
+      content: U.el('div', { class: 'confirm' }, [
+        U.el('p', {
+          class: 'muted small',
+          text: 'Добавьте ключ OpenAI или Groq в разделе «Провайдеры» — распознавание работает напрямую, без Google Ассистента.',
+        }),
+        U.el('button', {
+          class: 'btn primary', text: 'Открыть провайдеров',
+          onclick: () => { Render.closeSheet(); ProvidersUI.openProvidersScreen(); },
+        }),
+      ]),
+    });
+  };
+
+  const insertText = (text) => {
+    if (!textarea) return;
+    const current = textarea.value;
+    const glue = current && !current.endsWith(' ') ? ' ' : '';
+    textarea.value = current + glue + text;
+    autoGrow();
+    const chatId = S.chatId;
+    if (chatId) Store.setDraft(chatId, textarea.value);
+    syncSend();
+    textarea.focus();
+  };
+
+  const toggleVoiceInput = () => {
+    if (voice.active) stopVoice();
+    else startVoice();
+  };
+
+  const toggleMic = toggleVoiceInput;
+
 
   const focus = () => {
     if (textarea) textarea.focus();

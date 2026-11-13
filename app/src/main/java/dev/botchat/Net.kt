@@ -3,6 +3,7 @@ package dev.botchat
 import android.content.Context
 import android.os.Build
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -195,6 +196,45 @@ object Net {
     }
 
     fun rawBodyHint(body: String): String = body.take(400)
+
+    /**
+     * Multipart POST для аудио-распознавания. Только один файл + поле модели.
+     */
+    fun multipart(
+        url: String,
+        headers: Map<String, String>,
+        file: java.io.File,
+        field: String,
+        fileName: String,
+        model: String
+    ): Result<JSONObject> {
+        return try {
+            val body = okhttp3.MultipartBody.Builder()
+                .setType(okhttp3.MultipartBody.FORM)
+                .addFormDataPart("model", model)
+                .addFormDataPart(
+                    field,
+                    fileName,
+                    okhttp3.RequestBody.create("audio/wav".toMediaTypeOrNull(), file)
+                )
+                .build()
+            val builder = Request.Builder().url(url).post(body)
+            headers.forEach { (k, v) ->
+                if (!k.equals("Content-Type", ignoreCase = true)) builder.header(k, v)
+            }
+            client.newCall(builder.build()).execute().use { res ->
+                val text = res.body?.string() ?: ""
+                if (!res.isSuccessful) {
+                    return Result.failure(
+                        NetException(res.code, friendly(res.code, text), res.code == 429 || res.code >= 500)
+                    )
+                }
+                Result.success(if (text.isBlank()) JSONObject() else JSONObject(text))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
     fun friendly(code: Int, body: String): String {
         val detail = body.take(400).replace(Regex("\\s+"), " ").trim()

@@ -218,7 +218,7 @@ const Actions = (() => {
           Render.toast('Переслано в «' + chat.title + '»');
         },
       }, [
-        Render.avatar(chat.title, chat.color, 2),
+        Render.avatar(chat.title, chat.color, 2, chat),
         U.el('span', { class: 'forward-name', text: chat.title }),
       ]));
     });
@@ -289,7 +289,11 @@ const Actions = (() => {
   };
 
   const openChatSheet = () => {
-    Pickers.chatSettings();
+    Pickers.openChatCard(S.chatId);
+  };
+
+  const openChatCard = (chatId) => {
+    Pickers.openChatCard(chatId);
   };
 
   const openSettingsSection = (name) => {
@@ -358,7 +362,7 @@ const Actions = (() => {
 
   return {
     go, newChat, openChat, openChatAt, back, togglePin, toggleArchive, confirmDelete,
-    openAttachment, replyTo, messageMenu, openChatMenu, openChatSheet, openAppMenu,
+    openAttachment, replyTo, messageMenu, openChatMenu, openChatSheet, openChatCard, openAppMenu,
     openModelSheet, compactSession, openTaskGraph, resolvePermission, handleBack,
     selectTextSheet,
     handleIntent, sendPendingReply, forwardMessage, openSettingsSection,
