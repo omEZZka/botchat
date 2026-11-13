@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Каталог провайдеров, адаптеры API, health, кольцо ключей.
@@ -62,6 +63,10 @@ object Providers {
     )
 
     private const val CUSTOM_FILE = "custom_providers.json"
+    private const val CUSTOM_PROBE_ID = "__probe__"
+
+    /** Временные заголовки для «прозвона» ещё не сохранённого провайдера. */
+    private val probeHeaders = ConcurrentHashMap<String, Map<String, String>>()
 
     fun customFile(context: Context) = File(context.filesDir, CUSTOM_FILE)
 
@@ -103,6 +108,7 @@ object Providers {
     fun byId(context: Context, id: String): Provider? = all(context).firstOrNull { it.id == id }
 
     fun customHeaders(context: Context, id: String): Map<String, String> {
+        probeHeaders[id]?.let { return it }
         val custom = customList(context)
         for (i in 0 until custom.length()) {
             val item = custom.getJSONObject(i)
@@ -118,7 +124,11 @@ object Providers {
 
     fun cards(context: Context): JSONArray {
         val arr = JSONArray()
-        catalog.forEach { p ->
+        val custom = customList(context)
+        val customIds = HashSet<String>()
+        for (i in 0 until custom.length()) customIds.add(custom.getJSONObject(i).optString("id"))
+        all(context).forEach { p ->
+            val isCustom = customIds.contains(p.id) && catalog.none { it.id == p.id }
             arr.put(
                 JSONObject()
                     .put("id", p.id)
@@ -126,17 +136,36 @@ object Providers {
                     .put("baseUrl", p.baseUrl)
                     .put("apiType", p.apiType)
                     .put("needsKey", p.needsKey)
+                    .put("custom", isCustom)
                     .put("hasKey", Secrets.hasKey(context, p.id))
             )
         }
         return arr
     }
 
+    fun removeCustom(context: Context, id: String): JSONObject {
+        val arr = customList(context)
+        val next = JSONArray()
+        var removed = false
+        for (i in 0 until arr.length()) {
+            val item = arr.getJSONObject(i)
+            if (item.optString("id") == id) removed = true else next.put(item)
+        }
+        if (!removed) return JSONObject().put("ok", false).put("error", "Провайдер не найден")
+        saveCustom(context, next)
+        Secrets.wipe(context, id)
+        Models.removeProvider(context, id)
+        return JSONObject().put("ok", true)
+    }
+
     fun addCustom(context: Context, payload: JSONObject): JSONObject {
         val id = payload.optString("id").trim().lowercase().replace(Regex("[^a-z0-9_-]"), "")
         if (id.isBlank()) return JSONObject().put("ok", false).put("error", "Некорректный id")
-        val baseUrl = payload.optString("baseUrl").trim()
+        val baseUrl = payload.optString("baseUrl").trim().trimEnd('/')
         if (baseUrl.isBlank()) return JSONObject().put("ok", false).put("error", "Пустой Base URL")
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            return JSONObject().put("ok", false).put("error", "Base URL должен начинаться с http:// или https://")
+        }
         val arr = customList(context)
         val entry = JSONObject()
             .put("id", id)
@@ -157,14 +186,23 @@ object Providers {
         if (key.isNotBlank()) Secrets.add(context, id, key, "custom")
         val models = payload.optJSONArray("models")
         if (models != null && models.length() > 0) {
-            val cached = Models.cached(context)
+            val cached = Models.cachedRaw(context)
             for (i in 0 until models.length()) {
-                cached.put(
-                    JSONObject()
-                        .put("id", models.optString(i))
-                        .put("name", models.optString(i))
-                        .put("provider", id)
-                )
+                val modelId = models.optString(i)
+                if (modelId.isBlank()) continue
+                var present = false
+                for (j in 0 until cached.length()) {
+                    val item = cached.getJSONObject(j)
+                    if (item.optString("provider") == id && item.optString("id") == modelId) present = true
+                }
+                if (!present) {
+                    cached.put(
+                        JSONObject()
+                            .put("id", modelId)
+                            .put("name", modelId)
+                            .put("provider", id)
+                    )
+                }
             }
             Models.save(context, cached)
         }
@@ -222,8 +260,15 @@ object Providers {
         val apiType = payload.optString("apiType", "openai-compatible")
         val key = payload.optString("key").trim().ifBlank { null }
         if (baseUrl.isBlank()) return JSONObject().put("ok", false).put("error", "Пустой Base URL")
-        val temp = Provider("custom", "custom", baseUrl, normalizeType(apiType), needsKey = key != null)
+        val temp = Provider(CUSTOM_PROBE_ID, "custom", baseUrl, normalizeType(apiType), needsKey = key != null)
+        val extra = payload.optJSONObject("headers")
+        if (extra != null) {
+            val map = LinkedHashMap<String, String>()
+            extra.keys().forEach { k -> map[k] = extra.optString(k) }
+            probeHeaders[CUSTOM_PROBE_ID] = map
+        }
         val models = runCatching { fetchModels(context, temp, key) }.getOrElse { emptyList() }
+        probeHeaders.remove(CUSTOM_PROBE_ID)
         val arr = JSONArray()
         models.forEach { arr.put(JSONObject().put("id", it.id).put("name", it.name)) }
         return JSONObject()
@@ -248,17 +293,27 @@ object Providers {
     }
 
     private fun fetchModelsOnce(context: Context, provider: Provider, key: String?): List<ModelInfo> {
-        val url = when (provider.apiType) {
-            "anthropic" -> provider.baseUrl + "/models"
-            "gemini" -> provider.baseUrl + "/models"
-            else -> provider.baseUrl + "/models"
+        // Разные API отдают список моделей по разным путям: пробуем по очереди.
+        val candidates = LinkedHashSet<String>()
+        val base = provider.baseUrl.trimEnd('/')
+        candidates.add("$base/models")
+        if (provider.apiType == "openai" || provider.apiType == "openai-compatible") {
+            if (!base.endsWith("/v1")) candidates.add("$base/v1/models")
+            if (base.endsWith("/chat/completions")) candidates.add(base.removeSuffix("/chat/completions") + "/models")
         }
+        var body: JSONObject? = null
         val hdrs = headers(provider, key).toMutableMap()
-        hdrs.remove("Accept")
         hdrs["Accept"] = "application/json"
         customHeaders(context, provider.id).forEach { (k, v) -> hdrs[k] = v }
-        val res = Net.json(url, "GET", hdrs, null)
-        val body = res.getOrElse { return emptyList() }
+        for (url in candidates) {
+            val res = Net.json(url, "GET", hdrs, null)
+            val parsed = res.getOrNull()
+            if (parsed != null && (parsed.has("data") || parsed.has("models"))) {
+                body = parsed
+                break
+            }
+        }
+        if (body == null) return emptyList()
         val out = ArrayList<ModelInfo>()
         when (provider.apiType) {
             "gemini" -> {
@@ -311,6 +366,6 @@ object Providers {
         return out.sortedBy { it.id }.distinctBy { it.id }
     }
 
-    /** Встроенных «бесплатных» моделей больше нет: список даёт только сеть. */
-    fun defaultModels(providerId: String): List<ModelInfo> = emptyList()
+    /** Встроенных моделей нет: список даёт только сеть после подключения провайдера. */
+    fun defaultModels(providerId: String): List<ModelInfo> = emptyList<ModelInfo>()
 }

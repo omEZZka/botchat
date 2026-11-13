@@ -87,6 +87,7 @@ const Render = (() => {
       role: 'dialog', 'aria-modal': 'true',
       'data-sheet': 'sheet-' + (depth + 1),
     });
+    if (!opts.full) sheet.appendChild(U.el('div', { class: 'sheet-grip', 'aria-hidden': 'true' }));
     if (opts.title) {
       sheet.appendChild(U.el('div', { class: 'sheet-head' }, [
         iconButton(opts.full ? 'back' : 'close', opts.full ? 'Назад' : 'Закрыть', () => closeSheet()),
@@ -147,7 +148,13 @@ const Render = (() => {
 
   const hasSheet = () => S.sheets.length > 0;
 
+  /**
+   * Drag-to-dismiss только за «ручку» и шапку: раньше любое касание тела
+   * шторки (в том числе пролистывание списка) закрывало её.
+   */
   const bindDrag = (sheet, backdrop) => {
+    const grabArea = sheet.querySelector('.sheet-grip, .sheet-head');
+    if (!grabArea) return;
     let startY = 0;
     let delta = 0;
     let startTime = 0;
@@ -159,6 +166,7 @@ const Render = (() => {
       dragging = true;
       delta = 0;
       sheet.style.transition = 'none';
+      ev.stopPropagation();
     };
     const onMove = (ev) => {
       if (!dragging) return;
@@ -173,17 +181,18 @@ const Render = (() => {
       sheet.style.transition = '';
       const height = sheet.offsetHeight || 400;
       const velocity = delta / Math.max(1, Date.now() - startTime);
-      if (delta > height * 0.32 || velocity > 0.8) {
+      const threshold = Math.max(96, height * 0.32);
+      if (delta > threshold && velocity > 0.25) {
         closeSheet();
       } else {
         sheet.style.transform = '';
         if (backdrop) backdrop.style.opacity = '';
       }
     };
-    sheet.addEventListener('touchstart', onStart, { passive: true });
-    sheet.addEventListener('touchmove', onMove, { passive: true });
-    sheet.addEventListener('touchend', onEnd);
-    sheet.addEventListener('touchcancel', onEnd);
+    grabArea.addEventListener('touchstart', onStart, { passive: true });
+    grabArea.addEventListener('touchmove', onMove, { passive: true });
+    grabArea.addEventListener('touchend', onEnd);
+    grabArea.addEventListener('touchcancel', onEnd);
   };
 
   const render = () => {

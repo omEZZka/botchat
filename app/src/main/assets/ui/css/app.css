@@ -1519,3 +1519,76 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
   to { opacity: 1; transform: none; }
 }
 :root[data-motion='reduced'] .screen { animation: none; }
+
+/* ---------- ручка шторки ---------- */
+
+.sheet-grip {
+  width: 38px;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--line);
+  margin: 8px auto 2px;
+  flex: 0 0 auto;
+  cursor: grab;
+}
+.sheet.full .sheet-grip { display: none; }
+
+/* шторка не должна «уезжать» от прокрутки тела */
+.sheet-body { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+/* ---------- провайдеры и модели: группы, папки ---------- */
+
+.field-hint { font-size: 11.5px; color: var(--mut); }
+
+.provider-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 6px 8px;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--mut);
+  border-bottom: 1px solid var(--line);
+}
+.provider-group .icon { color: var(--mut); }
+.provider-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-group-count { font-weight: 500; letter-spacing: 0; }
+
+.folders { display: flex; flex-direction: column; margin-bottom: 6px; }
+.folder-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 6px;
+  font-size: 13.5px;
+  color: var(--fg-2);
+  border-bottom: 1px solid var(--line);
+}
+.folder-name { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-count { font-size: 11.5px; color: var(--mut); }
+
+.model-row { display: flex; align-items: center; gap: 0; }
+.model-folder, .model-remove, .model-pin {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: var(--mut);
+  flex: 0 0 auto;
+  border-radius: 8px;
+}
+.model-remove { color: var(--danger); opacity: 0.75; }
+.model-remove:active, .model-folder:active, .model-pin:active { background: var(--bg-3); }
+
+.probe-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 4px; }
+.probe-model { display: flex; align-items: center; gap: 9px; padding: 6px 2px; font-size: 13px; }
+.probe-model input { width: 18px; height: 18px; accent-color: var(--acc); }
+.probe-models { max-height: 220px; overflow-y: auto; }
+
+.add-provider .btn { width: 100%; margin-top: 8px; }
+.add-provider .field-group { margin-bottom: 12px; }

@@ -58,6 +58,26 @@ const ProvidersUI = (() => {
         class: 'btn small danger-ghost', text: 'Отключить',
         onclick: () => disableProvider(provider),
       }) : null,
+      provider.custom ? U.el('button', {
+        class: 'btn small danger-ghost', text: 'Удалить',
+        onclick: () => Render.confirm({
+          title: 'Удалить провайдера',
+          text: 'Провайдер «' + provider.name + '» и его модели будут удалены с устройства.',
+          okText: 'Удалить', danger: true,
+          onOk: async () => {
+            const res = await Native.api('providers.remove', { providerId: provider.id });
+            if (res && res.ok) {
+              S.models = (S.models || []).filter((m) => m.provider !== provider.id);
+              await load();
+              Render.closeSheet();
+              openProvidersScreen();
+              Render.toast('Провайдер удалён');
+            } else {
+              Render.toast((res && res.error) || 'Не удалось удалить');
+            }
+          },
+        }),
+      }) : null,
     ]);
     card.appendChild(actions);
     return card;
@@ -139,7 +159,13 @@ const ProvidersUI = (() => {
     if (res && res.ok) {
       provider.healthy = res.healthy;
       provider.modelCount = res.modelCount || provider.modelCount;
-      Render.toast(res.healthy ? 'Подключение работает' : 'Подключение не удалось');
+      Render.toast(res.healthy
+        ? 'Подключение работает · моделей: ' + (res.modelCount || 0)
+        : 'Подключение не удалось' + (res.error ? ': ' + res.error : ''));
+      if (res.healthy) {
+        const refreshed = await Native.api('models.refresh');
+        if (refreshed && refreshed.ok) S.models = refreshed.models || S.models;
+      }
       Bus.emit('render');
     } else {
       Render.toast((res && res.error) || 'Проверка не удалась');
@@ -154,97 +180,156 @@ const ProvidersUI = (() => {
 
   const openAddProvider = () => {
     const fields = {};
-    const mk = (name, placeholder, type) => {
-      const input = U.el('input', {
-        class: 'field', type: type || 'text', placeholder: placeholder || '',
-        autocomplete: 'off', spellcheck: 'false',
-      });
-      fields[name] = input;
-      return U.el('label', { class: 'field-group' }, [U.el('span', { class: 'field-label', text: name }), input]);
-    };
+    const group = (label, input, hint) => U.el('label', { class: 'field-group' }, [
+      U.el('span', { class: 'field-label', text: label }),
+      input,
+      hint ? U.el('span', { class: 'field-hint', text: hint }) : null,
+    ]);
+
+    fields.id = U.el('input', {
+      class: 'field', placeholder: 'my-provider', autocomplete: 'off', spellcheck: 'false',
+    });
+    fields.name = U.el('input', { class: 'field', placeholder: 'Мой провайдер' });
+    fields.baseUrl = U.el('input', {
+      class: 'field', type: 'url', placeholder: 'https://api.example.com/v1',
+      autocomplete: 'off', spellcheck: 'false',
+    });
+    fields.key = U.el('input', {
+      class: 'field', type: 'password', placeholder: 'sk-… (если требуется)',
+      autocomplete: 'off', spellcheck: 'false',
+    });
+    fields.headers = U.el('textarea', {
+      class: 'field textarea', rows: 2, placeholder: '{"X-Title": "botCHAT"}',
+    });
     const typeSelect = U.el('select', { class: 'field' }, [
       U.el('option', { value: 'openai-compatible', text: 'openai-compatible' }),
       U.el('option', { value: 'anthropic', text: 'anthropic' }),
       U.el('option', { value: 'gemini', text: 'gemini' }),
     ]);
+
     const probe = U.el('div', { class: 'probe-models' });
-    const headersGroup = U.el('label', { class: 'field-group' }, [
-      U.el('span', { class: 'field-label', text: 'Доп. заголовки (JSON)' }),
-      U.el('textarea', { class: 'field textarea', rows: 3, placeholder: '{"X-Title":"botCHAT"}' }),
-    ]);
-    const headersInput = headersGroup.querySelector('textarea');
+    const picked = new Set();
+
+    const probeButton = U.el('button', {
+      class: 'btn', text: 'Прозвонить',
+      onclick: async () => {
+        const baseUrl = fields.baseUrl.value.trim();
+        if (!baseUrl) {
+          Render.toast('Укажите Base URL');
+          return;
+        }
+        probeButton.disabled = true;
+        U.clear(probe);
+        probe.appendChild(U.el('div', { class: 'probe-row' }, [
+          U.el('span', { class: 'spinner tiny' }),
+          U.el('span', { text: 'Запрашиваю список моделей…' }),
+        ]));
+        const res = await Native.api('providers.probe', {
+          baseUrl,
+          apiType: typeSelect.value,
+          key: fields.key.value.trim(),
+          headers: U.safeJson(fields.headers.value || '{}', {}),
+        });
+        probeButton.disabled = false;
+        U.clear(probe);
+        if (!res || !res.ok) {
+          probe.appendChild(U.el('p', {
+            class: 'muted small', text: 'Не удалось получить модели: ' + ((res && res.error) || 'нет ответа'),
+          }));
+          return;
+        }
+        const models = res.models || [];
+        if (!models.length) {
+          probe.appendChild(U.el('p', {
+            class: 'muted small',
+            text: 'Сервер ответил, но моделей нет. Можно сохранить провайдера и добавить модель вручную.',
+          }));
+          return;
+        }
+        picked.clear();
+        probe.appendChild(U.el('div', { class: 'probe-head' }, [
+          U.el('span', { class: 'muted small', text: 'Найдено: ' + models.length }),
+          U.el('button', {
+            class: 'link-btn', text: 'все / ничего',
+            onclick: (ev) => {
+              const boxes = U.$$('.probe-model input', probe);
+              const any = boxes.some((b) => !b.checked);
+              boxes.forEach((b) => { b.checked = any; });
+              picked.clear();
+              if (any) models.forEach((m) => picked.add(m.id));
+              ev.currentTarget.textContent = any ? 'снять все' : 'выбрать все';
+            },
+          }),
+        ]));
+        models.forEach((model) => {
+          const cb = U.el('input', { type: 'checkbox', checked: 'checked' });
+          picked.add(model.id);
+          cb.addEventListener('change', () => {
+            if (cb.checked) picked.add(model.id); else picked.delete(model.id);
+          });
+          probe.appendChild(U.el('label', { class: 'probe-model' }, [
+            cb, U.el('span', { text: model.name && model.name !== model.id
+              ? model.name + ' · ' + model.id
+              : model.id }),
+          ]));
+        });
+      },
+    });
+
+    const saveButton = U.el('button', {
+      class: 'btn primary', text: 'Сохранить и подключить',
+      onclick: async () => {
+        const id = fields.id.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+        const name = fields.name.value.trim() || id;
+        const baseUrl = fields.baseUrl.value.trim();
+        if (!id) { Render.toast('Заполните ID'); return; }
+        if (!/^https?:\/\//.test(baseUrl)) { Render.toast('Base URL должен начинаться с http:// или https://'); return; }
+        saveButton.disabled = true;
+        saveButton.textContent = 'Сохраняю…';
+        const res = await Native.api('providers.add', {
+          id,
+          name,
+          baseUrl,
+          apiType: typeSelect.value,
+          headers: U.safeJson(fields.headers.value || '{}', {}),
+          key: fields.key.value.trim(),
+          models: Array.from(picked),
+        });
+        if (!res || !res.ok) {
+          saveButton.disabled = false;
+          saveButton.textContent = 'Сохранить и подключить';
+          Render.toast((res && res.error) || 'Не удалось сохранить провайдера');
+          return;
+        }
+        // Сразу подтягиваем модели добавленного провайдера, не закрывая шторку в «пустоту».
+        saveButton.textContent = 'Загружаю модели…';
+        const refreshed = await Native.api('models.refresh');
+        if (refreshed && refreshed.ok) S.models = refreshed.models || S.models;
+        await load();
+        Render.closeSheet();
+        Render.toast('Провайдер «' + name + '» подключён');
+        openProvidersScreen();
+      },
+    });
+
     const content = U.el('div', { class: 'add-provider' }, [
-      U.el('label', { class: 'field-group' }, [U.el('span', { class: 'field-label', text: 'ID (латиница)' }), fields.id = U.el('input', { class: 'field', placeholder: 'my-provider' })]),
-      U.el('label', { class: 'field-group' }, [U.el('span', { class: 'field-label', text: 'Отображаемое имя' }), fields.name = U.el('input', { class: 'field', placeholder: 'Мой провайдер' })]),
-      U.el('label', { class: 'field-group' }, [U.el('span', { class: 'field-label', text: 'Base URL' }), fields.baseUrl = U.el('input', { class: 'field', placeholder: 'https://api.example.com/v1' })]),
-      U.el('label', { class: 'field-group' }, [U.el('span', { class: 'field-label', text: 'Тип API' }), typeSelect]),
-      headersGroup,
-      U.el('label', { class: 'field-group' }, [U.el('span', { class: 'field-label', text: 'API-ключ' }), fields.key = U.el('input', { class: 'field', type: 'password', placeholder: 'sk-…' })]),
-      U.el('button', {
-        class: 'btn', text: 'Прозвонить',
-        onclick: async () => {
-          U.clear(probe);
-          probe.appendChild(U.el('div', { class: 'probe-row' }, [U.el('span', { class: 'spinner tiny' }), U.el('span', { text: 'Запрашиваю модели…' })]));
-          const res = await Native.api('providers.probe', {
-            baseUrl: fields.baseUrl.value.trim(),
-            apiType: typeSelect.value,
-            key: fields.key.value.trim(),
-            headers: U.safeJson(headersInput.value || '{}', {}),
-          });
-          U.clear(probe);
-          if (!res || !res.ok) {
-            probe.appendChild(U.el('p', { class: 'muted small', text: (res && res.error) || 'Не удалось получить список' }));
-            return;
-          }
-          const models = res.models || [];
-          if (!models.length) {
-            probe.appendChild(U.el('p', { class: 'muted small', text: 'Моделей не найдено' }));
-            return;
-          }
-          probe.appendChild(U.el('p', { class: 'muted small', text: 'Найдено: ' + models.length }));
-          models.forEach((model) => {
-            const cb = U.el('input', { type: 'checkbox', checked: 'checked' });
-            const row = U.el('label', { class: 'probe-model' }, [cb, U.el('span', { text: model.id })]);
-            row.dataset.model = model.id;
-            probe.appendChild(row);
-          });
-        },
-      }),
-      U.el('button', {
-        class: 'btn primary', text: 'Сохранить и подключить',
-        onclick: async () => {
-          const id = fields.id.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-          const name = fields.name.value.trim() || id;
-          const baseUrl = fields.baseUrl.value.trim();
-          if (!id || !baseUrl) {
-            Render.toast('Заполните ID и Base URL');
-            return;
-          }
-          const picked = U.$$('.probe-model input:checked', probe).map((cb) => cb.parentElement.dataset.model);
-          const res = await Native.api('providers.add', {
-            id, name, baseUrl,
-            apiType: typeSelect.value,
-            headers: U.safeJson(headersInput.value || '{}', {}),
-            key: fields.key.value.trim(),
-            models: picked,
-          });
-          if (res && res.ok) {
-            Render.closeSheet();
-            await load();
-            Render.toast('Провайдер подключён');
-          } else {
-            Render.toast((res && res.error) || 'Не удалось сохранить');
-          }
-        },
-      }),
+      group('ID (латиница)', fields.id, 'латиница, цифры, _ и -'),
+      group('Отображаемое имя', fields.name),
+      group('Base URL', fields.baseUrl, 'например https://api.openai.com/v1'),
+      group('Тип API', typeSelect),
+      group('Доп. заголовки (JSON)', fields.headers),
+      group('API-ключ', fields.key),
+      probeButton,
+      probe,
+      saveButton,
     ]);
-    Render.openSheet({ title: 'Добавить провайдера', content });
+    Render.openSheet({ title: 'Добавить провайдера', content, full: true });
   };
 
   const openProvidersScreen = () => {
     const content = U.el('div', { class: 'providers-screen' });
-    const connected = S.providers.filter((p) => p.hasKey || !p.needsKey);
-    const others = S.providers.filter((p) => !p.hasKey && p.needsKey);
+    const connected = S.providers.filter((p) => p.hasKey || !p.needsKey || p.custom);
+    const others = S.providers.filter((p) => !p.hasKey && p.needsKey && !p.custom);
     content.appendChild(U.el('h3', { class: 'section-title', text: 'Подключённые' }));
     if (!connected.length) content.appendChild(U.el('p', { class: 'muted small', text: 'Пока нет подключённых провайдеров' }));
     connected.forEach((p) => content.appendChild(providerCard(p)));
@@ -260,98 +345,206 @@ const ProvidersUI = (() => {
   const openModelSheet = () => {
     const content = U.el('div', { class: 'model-sheet' });
     const chat = Store.getChat(S.chatId);
-    const search = U.el('input', { class: 'field', type: 'search', placeholder: 'Поиск модели' });
+    const search = U.el('input', {
+      class: 'field', type: 'search', placeholder: 'Поиск модели',
+      oninput: () => renderList(search.value),
+    });
     const list = U.el('div', { class: 'model-list' });
+    const collapsed = () => S.settings.collapsedProviders || {};
+    const folders = () => S.settings.modelFolders || {};
+
+    const toggleGroup = (providerId) => {
+      const next = Object.assign({}, collapsed());
+      next[providerId] = !next[providerId];
+      Store.setSetting('collapsedProviders', next);
+      renderList(search.value);
+    };
+
+    const choose = async (providerId, model) => {
+      await Store.setChatModel(S.chatId, providerId, model.id);
+      S.settings.activeProvider = providerId;
+      S.settings.activeModel = model.id;
+      Settings.write(S.settings);
+      Render.closeSheet();
+      Bus.emit('render');
+    };
+
+    const modelRow = (providerId, model) => {
+      const active = chat && chat.model === model.id &&
+        (chat.provider || S.settings.activeProvider) === providerId;
+      const key = providerId + '|' + model.id;
+      const pinned = (S.settings.pinnedModels || []).includes(key);
+      return U.el('div', { class: 'model-row' + (active ? ' active' : '') }, [
+        U.el('button', {
+          class: 'model-row-main', type: 'button', onclick: () => choose(providerId, model),
+        }, [
+          Icons.make(active ? 'check' : 'model', 16),
+          U.el('span', { class: 'model-name', text: model.name || model.id }),
+          U.el('span', {
+            class: 'model-meta',
+            text: (model.context ? Math.round(model.context / 1000) + 'k' : '') +
+              (model.reasoning ? ' · reasoning' : '') +
+              (model.vision ? ' · vision' : ''),
+          }),
+        ]),
+        U.el('button', {
+          class: 'model-pin' + (pinned ? ' on' : ''), type: 'button',
+          'aria-label': pinned ? 'Открепить' : 'Закрепить',
+          onclick: async (ev) => {
+            ev.stopPropagation();
+            const next = new Set(S.settings.pinnedModels || []);
+            if (next.has(key)) next.delete(key); else next.add(key);
+            Store.setSetting('pinnedModels', Array.from(next));
+            renderList(search.value);
+          },
+        }, Icons.make('pin', 14)),
+        U.el('button', {
+          class: 'model-folder', type: 'button', 'aria-label': 'В папку',
+          onclick: (ev) => {
+            ev.stopPropagation();
+            const all = Object.keys(folders());
+            if (!all.length) {
+              Render.toast('Сначала создайте папку');
+              return;
+            }
+            Render.openSheet({
+              title: 'В папку',
+              content: U.el('div', { class: 'forward-list' }, all.map((name) => U.el('button', {
+                class: 'forward-row', type: 'button', text: name,
+                onclick: () => {
+                  const next = Object.assign({}, folders());
+                  next[name] = Array.from(new Set((next[name] || []).concat([key])));
+                  Store.setSetting('modelFolders', next);
+                  Render.closeSheet();
+                  renderList(search.value);
+                },
+              }))),
+            });
+          },
+        }, Icons.make('folder', 14)),
+        U.el('button', {
+          class: 'model-remove', type: 'button', 'aria-label': 'Удалить модель',
+          onclick: async (ev) => {
+            ev.stopPropagation();
+            const res = await Native.api('models.hide', { providerId, modelId: model.id });
+            if (res && res.ok) {
+              S.models = (S.models || []).filter(
+                (m) => !(m.provider === providerId && m.id === model.id)
+              );
+              renderList(search.value);
+              Render.toast('Модель удалена из списка');
+            } else {
+              Render.toast('Не удалось удалить модель');
+            }
+          },
+        }, Icons.make('trash', 14)),
+      ]);
+    };
+
+    const folderSection = () => {
+      const all = folders();
+      const names = Object.keys(all);
+      const box = U.el('div', { class: 'folders' });
+      names.forEach((name) => {
+        const ids = all[name] || [];
+        const open = !(collapsed()['folder:' + name]);
+        const head = U.el('button', {
+          class: 'folder-head', type: 'button',
+          onclick: () => {
+            const next = Object.assign({}, collapsed());
+            next['folder:' + name] = !next['folder:' + name];
+            Store.setSetting('collapsedProviders', next);
+            renderList(search.value);
+          },
+        }, [
+          Icons.make(open ? 'folder' : 'folder', 16),
+          U.el('span', { class: 'folder-name', text: name }),
+          U.el('span', { class: 'folder-count', text: String(ids.length) }),
+          Icons.make(open ? 'down' : 'back', 14),
+        ]);
+        head.addEventListener('contextmenu', (ev) => {
+          ev.preventDefault();
+          const next = Object.assign({}, folders());
+          delete next[name];
+          Store.setSetting('modelFolders', next);
+          renderList(search.value);
+          Render.toast('Папка удалена');
+        });
+        box.appendChild(head);
+        if (!open) return;
+        ids.forEach((key) => {
+          const idx = key.indexOf('|');
+          const providerId = key.slice(0, idx);
+          const modelId = key.slice(idx + 1);
+          const model = (S.models || []).find(
+            (m) => m.provider === providerId && m.id === modelId
+          );
+          if (!model) return;
+          box.appendChild(modelRow(providerId, model));
+        });
+      });
+      return box;
+    };
+
     const renderList = (query) => {
       U.clear(list);
       const q = String(query || '').toLowerCase();
-      const grouped = new Map();
+      const groups = new Map();
       (S.models || []).forEach((model) => {
-        if (q && !(model.id + ' ' + (model.name || '')).toLowerCase().includes(q)) return;
+        if (q && !((model.id || '') + ' ' + (model.name || '')).toLowerCase().includes(q)) return;
         const providerId = model.provider || '';
-        if (!grouped.has(providerId)) grouped.set(providerId, []);
-        grouped.get(providerId).push(model);
+        if (!groups.has(providerId)) groups.set(providerId, []);
+        groups.get(providerId).push(model);
       });
-      // Бесплатные и доступные провайдеры — выше.
-      const providerRank = (id) => {
-        const provider = S.providers.find((p) => p.id === id);
-        const accountLimited = (S.quota || {})['@account|' + id];
-        if (!provider) return 2;
-        if (accountLimited) return 3;
-        return provider.needsKey && !provider.hasKey ? 2 : 0;
-      };
-      const groupEntries = Array.from(grouped.entries()).sort(
-        (a, b) => providerRank(a[0]) - providerRank(b[0]) || a[0].localeCompare(b[0])
-      );
-      grouped.clear();
-      groupEntries.forEach(([id, models]) => grouped.set(id, models));
-      if (!grouped.size) {
-        list.appendChild(U.el('p', { class: 'muted small', text: 'Модели не загружены. Проверьте провайдера в настройках.' }));
+      if (!groups.size) {
+        list.appendChild(U.el('div', { class: 'empty small' }, [
+          Icons.make('model', 28),
+          U.el('p', { text: 'Моделей нет. Подключите провайдера и нажмите «Обновить».' }),
+        ]));
         return;
       }
-      const pinned = new Set(S.settings.pinnedModels || []);
-      const modelRow = (providerId, model) => {
-        const active = chat && chat.model === model.id && (chat.provider || S.settings.activeProvider) === providerId;
-        const key = providerId + '|' + model.id;
-        const row = U.el('div', { class: 'model-row' + (active ? ' active' : '') }, [
-          U.el('button', {
-            class: 'model-row-main', type: 'button',
-            onclick: async () => {
-              await Store.setChatModel(S.chatId, providerId, model.id);
-              S.settings.activeProvider = providerId;
-              S.settings.activeModel = model.id;
-              Settings.write(S.settings);
-              Render.closeSheet();
-              Bus.emit('render');
-            },
-          }, [
-            Icons.make(active ? 'check' : 'model', 16),
-            U.el('span', { class: 'model-name', text: model.name || model.id }),
-            U.el('span', { class: 'model-meta', text: (model.context ? Math.round(model.context / 1000) + 'k' : '') + (model.reasoning ? ' · reasoning' : '') }),
-          ]),
-          U.el('button', {
-            class: 'model-pin' + (pinned.has(key) ? ' on' : ''), type: 'button',
-            'aria-label': pinned.has(key) ? 'Открепить модель' : 'Закрепить модель',
-            onclick: (ev) => {
-              ev.stopPropagation();
-              const next = new Set(S.settings.pinnedModels || []);
-              if (next.has(key)) next.delete(key); else next.add(key);
-              Store.setSetting('pinnedModels', Array.from(next));
-              renderList(search.value);
-            },
-          }, Icons.make('pin', 14)),
-        ]);
-        return row;
+      const providerRank = (id) => {
+        const provider = (S.providers || []).find((p) => p.id === id);
+        if (!provider) return 2;
+        if ((S.quota || {})['@account|' + id]) return 3;
+        return provider.hasKey ? 0 : 1;
       };
-      const pinnedModels = [];
-      grouped.forEach((models, providerId) => {
-        models.forEach((model) => {
-          if (pinned.has(providerId + '|' + model.id)) pinnedModels.push({ providerId, model });
+      Array.from(groups.entries())
+        .sort((a, b) => providerRank(a[0]) - providerRank(b[0]) || a[0].localeCompare(b[0]))
+        .forEach(([providerId, models]) => {
+          const provider = (S.providers || []).find((p) => p.id === providerId);
+          const isOpen = !collapsed()[providerId];
+          const limited = (S.quota || {})['@account|' + providerId];
+          const head = U.el('button', {
+            class: 'provider-group', type: 'button',
+            onclick: () => toggleGroup(providerId),
+          }, [
+            Icons.make(isOpen ? 'down' : 'back', 15),
+            U.el('span', { class: 'provider-group-name', text: provider ? provider.name : providerId }),
+            U.el('span', { class: 'provider-group-count', text: String(models.length) }),
+            limited ? U.el('span', { class: 'quota-badge', text: 'лимит ' + Math.ceil(limited / 1000) + ' с' }) : null,
+          ]);
+          list.appendChild(head);
+          if (!isOpen) return;
+          models.forEach((model) => list.appendChild(modelRow(providerId, model)));
         });
-      });
-      if (pinnedModels.length) {
-        list.appendChild(U.el('div', { class: 'model-group-label', text: 'Закреплённые' }));
-        pinnedModels.forEach(({ providerId, model }) => list.appendChild(modelRow(providerId, model)));
-      }
-      grouped.forEach((models, providerId) => {
-        const provider = S.providers.find((p) => p.id === providerId);
-        const limited = (S.quota || {})['@account|' + providerId];
-        const label = provider ? provider.name : providerId;
-        const head = U.el('div', { class: 'model-group-label' }, [
-          U.el('span', { text: label }),
-          limited ? U.el('span', {
-            class: 'quota-badge',
-            text: 'лимит ' + Math.ceil(limited / 1000) + ' с',
-          }) : null,
-        ]);
-        list.appendChild(head);
-        models.forEach((model) => list.appendChild(modelRow(providerId, model)));
-      });
     };
-    search.addEventListener('input', () => renderList(search.value));
-    content.appendChild(search);
-    content.appendChild(list);
-    content.appendChild(U.el('div', { class: 'model-footer' }, [
+
+    const folderButton = U.el('div', { class: 'model-footer' }, [
+      U.el('button', {
+        class: 'btn small', text: 'Папка',
+        onclick: () => Render.prompt({
+          title: 'Новая папка моделей', label: 'Название', placeholder: 'Например, Работа',
+          onOk: (name) => {
+            if (!name) return;
+            const next = Object.assign({}, folders());
+            next[name] = next[name] || [];
+            Store.setSetting('modelFolders', next);
+            renderList(search.value);
+            Render.toast('Папка создана');
+          },
+        }),
+      }),
       U.el('button', {
         class: 'btn small', text: 'Профили',
         onclick: () => { Render.closeSheet(); openProfiles(); },
@@ -361,28 +554,33 @@ const ProvidersUI = (() => {
         onclick: () => { Render.closeSheet(); openProvidersScreen(); },
       }),
       U.el('button', {
-        class: 'btn small', text: 'Резерв',
-        onclick: () => { Render.closeSheet(); openFallback(); },
+        class: 'btn small', text: 'Обновить',
+        onclick: () => refreshModels(search.value),
       }),
-      U.el('button', {
-        class: 'btn small', text: 'Квоты',
-        onclick: () => { Render.closeSheet(); openQuota(); },
-      }),
-      U.el('button', { class: 'btn small', text: 'Обновить', onclick: () => refreshModels(search.value) }),
-    ]));
+    ]);
+
     const refreshModels = async (query) => {
+      Render.toast('Обновляю список моделей…');
       const res = await Native.api('models.refresh');
       if (res && res.ok) {
         S.models = res.models || S.models;
         renderList(query);
-        Render.toast('Список моделей обновлён');
+        const errors = res.errors || {};
+        const failed = Object.keys(errors);
+        Render.toast(failed.length
+          ? 'Модели обновлены, ошибки: ' + failed.join(', ')
+          : 'Список моделей обновлён');
       } else {
         Render.toast((res && res.error) || 'Не удалось обновить');
       }
     };
+
+    content.appendChild(search);
+    content.appendChild(folderSection());
+    content.appendChild(list);
+    content.appendChild(folderButton);
     renderList('');
-    Render.openSheet({ title: 'Модель', content });
-    if (!(S.models || []).length) refreshModels('');
+    Render.openSheet({ title: 'Модели', content });
   };
 
   const openQuota = async () => {

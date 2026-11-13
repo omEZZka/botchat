@@ -55,6 +55,10 @@ class MainActivity : Activity(), BridgeHost {
     private var watchdog: Runnable? = null
     private var assetLoader: WebViewAssetLoader? = null
     private var renderCrashed = false
+    private val bridgePool = java.util.concurrent.Executors.newFixedThreadPool(3) { runnable ->
+        Thread(runnable, "BCBridge").apply { isDaemon = true }
+    }
+    private val bridgeSeq = java.util.concurrent.atomic.AtomicLong(0)
 
     private val REQ_FILES = 1001
     private val REQ_IMAGE = 1002
@@ -483,6 +487,53 @@ class MainActivity : Activity(), BridgeHost {
     }
 
     inner class Bridge {
+
+        /**
+         * Асинхронная точка входа: сетевые операции не блокируют JS-поток,
+         * результат приходит событием "bridge.result" с тем же id.
+         */
+        @JavascriptInterface
+        fun async(method: String, arg: String, requestId: String): Boolean {
+            val payload = runCatching { if (arg.isBlank()) JSONObject() else JSONObject(arg) }
+                .getOrElse {
+                    reply(requestId, err("bad payload"))
+                    return true
+                }
+            val op = payload.optString("op")
+            if (method == "api" && !Api.isNetworkOp(op)) {
+                reply(requestId, runCatching { Api.dispatch(this@MainActivity, payload) }
+                    .getOrElse { err(it.message ?: "api failed") })
+                return true
+            }
+            bridgePool.execute {
+                val result = runCatching {
+                    when (method) {
+                        "api" -> Api.dispatch(this@MainActivity, payload)
+                        "tool" -> Tools.run(
+                            this@MainActivity,
+                            payload.optString("chatId"),
+                            payload.optString("name"),
+                            payload.optJSONObject("args") ?: JSONObject()
+                        )
+                        else -> err("unknown async method: $method")
+                    }
+                }.getOrElse { err(it.message ?: "bridge failed") }
+                reply(requestId, result)
+            }
+            return true
+        }
+
+        private fun reply(requestId: String, result: JSONObject) {
+            if (requestId.isBlank()) return
+            runOnUiThread {
+                if (!::web.isInitialized) return@runOnUiThread
+                web.evaluateJavascript(
+                    "window.BCEmit && window.BCEmit('bridge.result', {id:" +
+                        JSONObject.quote(requestId) + ",data:" + result + "})",
+                    null
+                )
+            }
+        }
 
         @JavascriptInterface
         fun call(method: String, arg: String): String {

@@ -11,6 +11,18 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object Api {
 
+    /** Операции с сетью: выполняются вне JS-потока, чтобы WebView не подвисал. */
+    private val NETWORK_OPS = setOf(
+        "providers.probe",
+        "providers.health",
+        "models.refresh",
+        "models.probe",
+        "chat.start",
+        "providers.add"
+    )
+
+    fun isNetworkOp(op: String): Boolean = NETWORK_OPS.contains(op)
+
     fun dispatch(context: Context, payload: JSONObject): JSONObject {
         val op = payload.optString("op")
         return when (op) {
@@ -41,6 +53,18 @@ object Api {
                 JSONObject().put("ok", true)
             }
             "models.refresh" -> Models.refresh(context)
+            "models.hide" -> Models.hide(
+                context,
+                payload.optString("providerId"),
+                payload.optString("modelId")
+            )
+            "models.unhide" -> Models.unhide(
+                context,
+                payload.optString("providerId"),
+                payload.optString("modelId")
+            )
+            "models.removeProvider" -> Models.removeProvider(context, payload.optString("providerId"))
+            "providers.remove" -> Providers.removeCustom(context, payload.optString("providerId"))
             "quota.info" -> Quota.snapshot(context)
             "quota.clear" -> {
                 val providerId = payload.optString("providerId")
@@ -202,10 +226,72 @@ object Models {
 
     private fun file(context: Context) = java.io.File(context.filesDir, FILE)
 
-    fun cached(context: Context): JSONArray {
+    /** Как сохранено, без фильтрации — для записи. */
+    fun cachedRaw(context: Context): JSONArray {
         val f = file(context)
         if (!f.exists()) return JSONArray()
         return runCatching { JSONArray(f.readText()) }.getOrDefault(JSONArray())
+    }
+
+    /** Для UI: без скрытых пользователем моделей. */
+    fun cached(context: Context): JSONArray {
+        val all = cachedRaw(context)
+        val hidden = hiddenSet(context)
+        if (hidden.isEmpty()) return all
+        val out = JSONArray()
+        for (i in 0 until all.length()) {
+            val item = all.getJSONObject(i)
+            if (!hidden.contains(item.optString("provider") + "|" + item.optString("id"))) {
+                out.put(item)
+            }
+        }
+        return out
+    }
+
+    private const val HIDDEN_FILE = "models_hidden.json"
+
+    fun hiddenSet(context: Context): MutableSet<String> {
+        val f = java.io.File(context.filesDir, HIDDEN_FILE)
+        if (!f.exists()) return HashSet()
+        val arr = runCatching { JSONArray(f.readText()) }.getOrDefault(JSONArray())
+        val out = HashSet<String>()
+        for (i in 0 until arr.length()) out.add(arr.optString(i))
+        return out
+    }
+
+    private fun saveHidden(context: Context, set: Set<String>) {
+        val f = java.io.File(context.filesDir, HIDDEN_FILE)
+        val tmp = java.io.File(context.filesDir, ".$HIDDEN_FILE.tmp")
+        tmp.writeText(JSONArray(set.toList()).toString())
+        if (!tmp.renameTo(f)) {
+            tmp.copyTo(f, overwrite = true)
+            tmp.delete()
+        }
+    }
+
+    fun hide(context: Context, providerId: String, modelId: String): JSONObject {
+        val set = hiddenSet(context)
+        set.add(providerId + "|" + modelId)
+        saveHidden(context, set)
+        return JSONObject().put("ok", true)
+    }
+
+    fun unhide(context: Context, providerId: String, modelId: String): JSONObject {
+        val set = hiddenSet(context)
+        set.remove(providerId + "|" + modelId)
+        saveHidden(context, set)
+        return JSONObject().put("ok", true)
+    }
+
+    fun removeProvider(context: Context, providerId: String): JSONObject {
+        val all = cachedRaw(context)
+        val next = JSONArray()
+        for (i in 0 until all.length()) {
+            val item = all.getJSONObject(i)
+            if (item.optString("provider") != providerId) next.put(item)
+        }
+        save(context, next)
+        return JSONObject().put("ok", true)
     }
 
     fun save(context: Context, models: JSONArray) {
@@ -246,7 +332,7 @@ object Models {
         if (result.length() > 0) save(context, result)
         return JSONObject()
             .put("ok", true)
-            .put("models", if (result.length() > 0) result else cached(context))
+            .put("models", if (result.length() > 0) cached(context) else cached(context))
             .put("errors", errors)
     }
 }

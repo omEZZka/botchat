@@ -42,10 +42,14 @@ object SubAgents {
             task.put("startedAt", System.currentTimeMillis())
             persist(context)
             notifyStatus(task)
-            val providerId = task.optString("provider").ifBlank { "opencode" }
-            val model = task.optString("model").ifBlank { "big-pickle" }
+            val providerId = task.optString("provider")
+            val model = task.optString("model")
             val prompt = task.optString("prompt").ifBlank { task.optString("description") }
-            val result = SubAgentRunner.run(context, providerId, model, prompt)
+            val result = if (providerId.isBlank() || model.isBlank()) {
+                JSONObject().put("ok", false).put("error", "не задана модель субагента")
+            } else {
+                SubAgentRunner.run(context, providerId, model, prompt)
+            }
             task.put("status", if (result.optBoolean("ok")) "done" else "error")
             task.put("output", result.optString("text"))
             task.put("error", result.optString("error"))

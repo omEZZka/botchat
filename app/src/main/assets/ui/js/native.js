@@ -18,7 +18,56 @@ const Native = (() => {
     }
   };
 
-  const api = (op, payload) => call('api', Object.assign({ op }, payload || {}));
+  // Асинхронный мост: сетевые операции не блокируют поток WebView.
+  const pending = new Map();
+  let seq = 0;
+
+  const ensureResultListener = () => {
+    if (ensureResultListener.done) return;
+    ensureResultListener.done = true;
+    window.BCEmit = window.BCEmit || (() => {});
+  };
+
+  const callAsync = (method, payload, timeoutMs) => {
+    const b = bridge();
+    if (!b || typeof b.async !== 'function') return call(method, payload);
+    ensureResultListener();
+    const id = 'r' + (++seq).toString(36) + Date.now().toString(36);
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        pending.delete(id);
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish({ ok: false, error: 'timeout' }), timeoutMs || 45000);
+      pending.set(id, finish);
+      try {
+        b.async(method, JSON.stringify(payload || {}), id);
+      } catch (err) {
+        finish({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
+    });
+  };
+
+  const resolveAsync = (payload) => {
+    if (!payload || !payload.id) return;
+    const finish = pending.get(payload.id);
+    if (finish) finish(payload.data || { ok: false, error: 'empty' });
+  };
+
+  const api = (op, payload) => {
+    const body = Object.assign({ op }, payload || {});
+    const b = bridge();
+    if (b && typeof b.async === 'function') {
+      const heavy = op.indexOf('chat.') === 0 || op.indexOf('providers.') === 0 ||
+        op.indexOf('models.') === 0 || op.indexOf('tools.') === 0;
+      return heavy ? callAsync('api', body) : call('api', body);
+    }
+    return call('api', body);
+  };
 
   const chatId = () => (typeof S !== 'undefined' && S && S.chatId) || '';
 
@@ -73,7 +122,13 @@ const Native = (() => {
     }
   };
 
-  window.BCEmit = emit;
+  window.BCEmit = (event, payload) => {
+    if (event === 'bridge.result') {
+      resolveAsync(payload);
+      return;
+    }
+    emit(event, payload);
+  };
 
   window.BCNative = {
     /**
