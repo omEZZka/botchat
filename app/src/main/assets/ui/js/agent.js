@@ -222,12 +222,21 @@ const Agent = (() => {
         content: outcome.text || '',
         toolCalls: outcome.toolCalls.map((c) => ({ id: c.id, name: c.name, args: c.args || {} })),
       });
+      const seenCalls = active.seenCalls || new Set();
+      active.seenCalls = seenCalls;
       for (const call of outcome.toolCalls) {
         if (active.cancelled) return;
         await waitIfPaused();
+        const signature = call.name + ':' + JSON.stringify(call.args || {});
+        if (seenCalls.has(signature)) {
+          // Модель повторяет тот же вызов — не зацикливаемся.
+          await appendNote(chatId, message, 'Остановка: повторяющийся вызов ' + call.name);
+          return;
+        }
+        seenCalls.add(signature);
         const tool = await addToolCard(chatId, message, call);
         Store.setAgent({ phase: 'tool', label: call.name + ': ' + summaryOf(call), step: steps, total: active.limit });
-        const result = await executeTool(chatId, call, tool);
+        const result = await executeTool(chatId, message, call, tool);
         if (result && result.checkpoint) {
           await Store.updateMessage(chatId, message.id, { checkpoint: result.checkpoint }, { silent: true });
         }
@@ -608,7 +617,7 @@ const Agent = (() => {
     return U.truncate(args.path || args.command || args.pattern || args.url || args.description || '', 50);
   };
 
-  const executeTool = async (chatId, call, tool) => {
+  const executeTool = async (chatId, message, call, tool) => {
     await updateTool(chatId, null, tool, { state: { status: 'running', error: null } });
     const chat = Store.getChat(chatId);
     const needsPermission = ['bash', 'write', 'edit', 'webfetch'].includes(call.name);

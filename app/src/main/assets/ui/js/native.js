@@ -81,7 +81,14 @@ const Native = (() => {
     remove: (path) => call('delete', { path, chatId: chatId() }),
   };
 
-  const tool = (name, args) => api('tool', { name, args: args || {} });
+  // Инструменты идут через отдельный метод моста, а не через Api.dispatch:
+  // так тяжёлые операции (bash, task) выполняются вне JS-потока.
+  const tool = (name, args) => {
+    const b = bridge();
+    const payload = { name, args: args || {}, chatId: chatId() };
+    if (b && typeof b.async === 'function') return callAsync('tool', payload);
+    return call('tool', payload);
+  };
 
   const env = () => call('env', {});
   const notify = (payload) => call('notify', payload || {});
