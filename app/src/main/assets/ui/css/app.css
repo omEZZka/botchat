@@ -1642,3 +1642,69 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
   line-height: 1.45;
 }
 .verify-busy .icon { flex: 0 0 auto; margin-top: 1px; }
+
+/* ---------- режим выбора чатов ---------- */
+
+.select-top { background: var(--bg-2); }
+.select-count {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 16px;
+  padding-left: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-all { font-weight: 600; padding: 8px 6px; }
+
+.chat-row.selecting .chat-row-inner { padding-left: 12px; }
+.chat-row.selected .chat-row-inner { background: var(--acc-soft); }
+
+.select-mark {
+  position: absolute;
+  left: -6px;
+  bottom: -2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  background: var(--bg-3);
+  color: #0b0e13;
+  display: grid;
+  place-items: center;
+  z-index: 2;
+}
+.select-mark.on { background: var(--acc); border-color: var(--acc); }
+
+.avatar-wrap { position: relative; }
+
+.select-actions {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: calc(8px + var(--safe-bottom));
+  z-index: 22;
+  display: flex;
+  justify-content: space-around;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+}
+.select-action {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px;
+  border-radius: 11px;
+  color: var(--fg-2);
+  font-size: 11px;
+  transition: background var(--motion) ease;
+}
+.select-action:active { background: var(--bg-3); }
+.select-action.danger { color: var(--danger); }

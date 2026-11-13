@@ -253,20 +253,37 @@ const Render = (() => {
     return badges;
   };
 
+  const listHeader = () => U.el('header', { class: 'topbar' }, [
+    U.el('div', { class: 'brand' }, [
+      U.el('span', { class: 'brand-mark', html: Icons.html('sparkle', 18) }),
+      U.el('span', { class: 'brand-name', text: 'botCHAT' }),
+    ]),
+    U.el('div', { class: 'topbar-actions' }, [
+      iconButton('search', 'Поиск', () => Actions.go('search')),
+      iconButton('menu', 'Меню', () => Actions.openAppMenu()),
+    ]),
+  ]);
+
+  const selectionHeader = () => {
+    const count = S.select.ids.length;
+    const header = U.el('header', { class: 'topbar select-top' }, [
+      iconButton('close', 'Отменить выбор', () => SelectMode.exit()),
+      U.el('span', { class: 'select-count', text: count ? 'Выбрано: ' + count : 'Выберите чаты' }),
+      U.el('div', { class: 'topbar-actions' }, [
+        U.el('button', {
+          class: 'link-btn select-all',
+          text: SelectMode.allSelected() ? 'Снять все' : 'Выбрать все',
+          onclick: () => SelectMode.selectAll(),
+        }),
+      ]),
+    ]);
+    return header;
+  };
+
   const renderList = (view) => {
     U.clear(view);
     const list = U.el('section', { class: 'screen list-screen' });
-    const header = U.el('header', { class: 'topbar' }, [
-      U.el('div', { class: 'brand' }, [
-        U.el('span', { class: 'brand-mark', html: Icons.html('sparkle', 18) }),
-        U.el('span', { class: 'brand-name', text: 'botCHAT' }),
-      ]),
-      U.el('div', { class: 'topbar-actions' }, [
-        iconButton('search', 'Поиск', () => Actions.go('search')),
-        iconButton('menu', 'Меню', () => Actions.openAppMenu()),
-      ]),
-    ]);
-    list.appendChild(header);
+    list.appendChild(SelectMode.isActive() ? selectionHeader() : listHeader());
 
     if (!S.online) {
       list.appendChild(U.el('div', { class: 'banner warn' }, [
@@ -297,32 +314,48 @@ const Render = (() => {
       list.appendChild(container);
     }
 
-    const fab = U.el('button', {
-      class: 'fab', type: 'button', 'aria-label': t('chats.new'),
-      onclick: () => Actions.newChat(),
-    }, Icons.make('plus', 24));
-    list.appendChild(fab);
+    if (SelectMode.isActive()) {
+      list.appendChild(selectionActions());
+    } else {
+      const fab = U.el('button', {
+        class: 'fab', type: 'button', 'aria-label': t('chats.new'),
+        onclick: () => Actions.newChat(),
+      }, Icons.make('plus', 24));
+      list.appendChild(fab);
+    }
     view.appendChild(list);
     bindSwipeRows(view);
   };
 
   const chatRow = (chat) => {
     const unread = chat.unread || 0;
+    const selecting = SelectMode.isActive();
+    const selected = SelectMode.has(chat.id);
     const row = U.el('article', {
-      class: 'chat-row', role: 'button', tabindex: '0',
+      class: 'chat-row' + (selecting ? ' selecting' : '') + (selected ? ' selected' : ''),
+      role: 'button',
+      tabindex: '0',
       'data-chat': chat.id,
-      onclick: () => Actions.openChat(chat.id),
+      'aria-selected': selecting ? (selected ? 'true' : 'false') : null,
       onkeydown: (ev) => {
         if (ev.key === 'Enter' || ev.key === ' ') {
           ev.preventDefault();
-          Actions.openChat(chat.id);
+          if (selecting) SelectMode.toggle(chat.id);
+          else Actions.openChat(chat.id);
         }
       },
     });
     const inner = U.el('div', { class: 'chat-row-inner' }, [
       U.el('div', { class: 'avatar-wrap' }, [
+        selecting
+          ? U.el('span', {
+            class: 'select-mark' + (selected ? ' on' : ''),
+            'aria-hidden': 'true',
+            html: selected ? Icons.html('check', 14) : '',
+          })
+          : null,
         avatar(chat.title, chat.color, 0),
-        chat.pinned ? U.el('span', { class: 'pin-mark', html: Icons.html('pin', 10) }) : null,
+        chat.pinned && !selecting ? U.el('span', { class: 'pin-mark', html: Icons.html('pin', 10) }) : null,
       ]),
       U.el('div', { class: 'chat-row-main' }, [
         U.el('div', { class: 'chat-row-top' }, [
@@ -339,7 +372,7 @@ const Render = (() => {
       ]),
     ]);
     row.appendChild(inner);
-    row.appendChild(U.el('div', { class: 'swipe-actions' }, [
+    if (!selecting) row.appendChild(U.el('div', { class: 'swipe-actions' }, [
       U.el('button', {
         class: 'swipe-btn pin', type: 'button', 'aria-label': 'Закрепить',
         onclick: (ev) => { ev.stopPropagation(); Actions.togglePin(chat.id); },
@@ -353,6 +386,7 @@ const Render = (() => {
         onclick: (ev) => { ev.stopPropagation(); Actions.confirmDelete(chat.id); },
       }, Icons.make('trash', 18)),
     ]));
+    SelectMode.bindRow(row, chat);
     return row;
   };
 
@@ -363,6 +397,7 @@ const Render = (() => {
   };
 
   const bindSwipeRows = (root) => {
+    if (SelectMode.isActive()) return;
     U.$$('.chat-row', root).forEach((row) => {
       let startX = 0;
       let startY = 0;
@@ -1027,6 +1062,32 @@ const Render = (() => {
     setTimeout(() => input.focus(), 100);
   };
 
+  const selectionActions = () => {
+    const bar = U.el('div', { class: 'select-actions' });
+    const anyPinned = S.select.ids
+      .map((id) => Store.getChat(id))
+      .filter(Boolean)
+      .every((c) => c.pinned);
+    const items = [
+      { icon: 'pin', label: anyPinned ? 'Открепить' : 'Закрепить', action: 'pin' },
+      { icon: 'archive', label: 'В архив', action: 'archive' },
+      { icon: 'eyeOff', label: 'Без прочитанного', action: 'unread' },
+      { icon: 'trash', label: 'Удалить', action: 'delete', danger: true },
+    ];
+    items.forEach((item) => {
+      bar.appendChild(U.el('button', {
+        class: 'select-action' + (item.danger ? ' danger' : ''),
+        type: 'button',
+        'aria-label': item.label,
+        onclick: () => SelectMode.act(item.action),
+      }, [
+        Icons.make(item.icon, 20),
+        U.el('span', { text: item.label }),
+      ]));
+    });
+    return bar;
+  };
+
   const bind = () => {
     Bus.on('render', render);
     Bus.on('chat:open', () => render());
@@ -1061,6 +1122,9 @@ const Render = (() => {
       }, { passive: true });
     };
     Bus.on('render', attachScroll);
+    Bus.on('select:changed', () => {
+      if (!SelectMode.isActive()) Render.render();
+    });
   };
 
   return {

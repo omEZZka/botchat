@@ -107,6 +107,7 @@ const S = {
     tasks: [],
   },
   pending: null,
+  select: { active: false, ids: [] },
   online: navigator.onLine !== false,
   sheets: [],
   toast: null,

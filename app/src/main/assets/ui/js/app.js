@@ -286,6 +286,10 @@ const Actions = (() => {
   };
 
   const handleBack = () => {
+    if (SelectMode.isActive()) {
+      SelectMode.exit();
+      return true;
+    }
     const onboarding = U.$('#sheet-host .onboarding');
     if (onboarding) {
       const skip = onboarding.querySelector('.onboarding-skip');
