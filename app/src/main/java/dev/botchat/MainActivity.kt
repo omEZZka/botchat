@@ -32,7 +32,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import android.app.Activity
-import androidx.activity.OnBackPressedCallback
 import androidx.core.content.ContextCompat
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONArray
