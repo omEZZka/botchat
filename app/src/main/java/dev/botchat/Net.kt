@@ -87,7 +87,7 @@ object Net {
                                 res.code,
                                 friendly(res.code, text),
                                 res.code == 429 || res.code >= 500,
-                                retryAfterMs(res),
+                                retryAfterMs(res).let { if (it > 0) it else retryHintFromBody(text) },
                                 quotaScope(res.code, text)
                             )
                         )
@@ -125,11 +125,12 @@ object Net {
                 call.execute().use { res ->
                     if (!res.isSuccessful) {
                         val err = res.body?.string() ?: ""
+                        val hinted = retryAfterMs(res).let { if (it > 0) it else retryHintFromBody(err) }
                         cb.onError(
                             friendly(res.code, err),
                             res.code == 429 || res.code >= 500,
                             res.code,
-                            retryAfterMs(res),
+                            hinted,
                             quotaScope(res.code, err)
                         )
                         return@use
@@ -193,6 +194,8 @@ object Net {
         }
     }
 
+    fun rawBodyHint(body: String): String = body.take(400)
+
     fun friendly(code: Int, body: String): String {
         val detail = body.take(400).replace(Regex("\\s+"), " ").trim()
         return when (code) {
@@ -221,6 +224,26 @@ object Net {
      * Разбирает подсказку провайдера о паузе: Retry-After (сек/дата),
      * X-RateLimit-Reset (unix-время) и задержку из тела ошибки.
      */
+    /**
+     * Провайдер может прислать паузу в тексте ошибки: «повтори через 5-10 секунд».
+     * Достаём число секунд, чтобы ждать ровно столько, сколько просят.
+     */
+    fun retryHintFromBody(body: String): Long {
+        if (body.isBlank()) return -1L
+        val lower = body.lowercase()
+        val patterns = listOf(
+            Regex("(?:through|after|in)\\s+(\\d{1,3})\\s*(?:-\\s*\\d{1,3})?\\s*sec"),
+            Regex("(?:через|повтори)\\s*(\\d{1,3})\\s*(?:-\\s*\\d{1,3})?\\s*сек"),
+            Regex("retry_after[\"\\s:]+(\\d{1,3})")
+        )
+        for (pattern in patterns) {
+            pattern.find(lower)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { seconds ->
+                return seconds.coerceIn(1, 300) * 1000
+            }
+        }
+        return -1L
+    }
+
     fun retryAfterMs(res: okhttp3.Response): Long {
         val retryAfter = res.header("Retry-After")
         if (!retryAfter.isNullOrBlank()) {

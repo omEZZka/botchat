@@ -63,7 +63,13 @@ object ModelCheck {
                 } else {
                     when (verdict.reason) {
                         "account_limit" -> Quota.markAccountLimited(context, provider.id, 5 * 60_000L)
-                        "rate_limit" -> Quota.markLimited(context, provider.id, modelId, 60_000L)
+                        // Временная перегрузка не должна скрывать рабочую модель надолго.
+                        "rate_limit" -> Quota.markLimited(
+                            context,
+                            provider.id,
+                            modelId,
+                            if (verdict.detail.contains("не выполнялся", ignoreCase = true)) 20_000L else 60_000L
+                        )
                         "no_access" -> Quota.clear(context, provider.id, modelId)
                         else -> Unit
                     }
@@ -93,15 +99,22 @@ object ModelCheck {
             last = probeModel(context, provider, key, modelId)
             if (last.ok) return last
             if (last.reason == "rate_limit") {
-                // Уважаем подсказку провайдера, затем одна повторная попытка.
-                val wait = if (last.detail.toLongOrNull() ?: 0L > 0) {
-                    (last.detail.toLongOrNull() ?: 0L).coerceIn(1_000L, 15_000L)
-                } else {
-                    1_500L
+                // Провайдер просит подождать: уважаем подсказку и делаем ещё одну попытку.
+                val hinted = Net.retryHintFromBody(last.detail)
+                val wait = when {
+                    hinted > 0 -> hinted.coerceIn(1_000L, 20_000L)
+                    last.detail.contains("не выполнялся", ignoreCase = true) -> 8_000L
+                    else -> 3_000L
                 }
                 Thread.sleep(wait)
                 last = probeModel(context, provider, key, modelId)
                 if (last.ok) return last
+                // Вторая пауза — на случай «5-10 секунд» из тела ошибки.
+                if (last.reason == "rate_limit") {
+                    Thread.sleep(wait.coerceAtMost(10_000L))
+                    last = probeModel(context, provider, key, modelId)
+                    if (last.ok) return last
+                }
             }
             // Проверка не переключает активный ключ: это делает только чат при реальной работе.
             if (last.reason != "rate_limit") return last

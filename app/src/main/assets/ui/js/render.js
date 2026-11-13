@@ -81,6 +81,10 @@ const Render = (() => {
   const openSheet = (options) => {
     const opts = options || {};
     const host = sheetHost();
+    // Защита от двойного вызова (долгое нажатие + contextmenu).
+    const now = Date.now();
+    if (S.lastSheetAt && now - S.lastSheetAt < 250 && S.sheets.length > 0) return null;
+    S.lastSheetAt = now;
     const depth = S.sheets.length;
     const sheet = U.el('div', {
       class: 'sheet' + (opts.full ? ' full' : ''),
@@ -872,9 +876,20 @@ const Render = (() => {
       Actions.replyTo(msg);
     });
 
+    // Долгое нажатие: таймер и contextmenu срабатывали одновременно
+    // и меню открывалось дважды. Держим единый флаг и дедуп по времени.
     let timer = null;
+    let firedAt = 0;
+    const fireMenu = () => {
+      const now = Date.now();
+      if (now - firedAt < 700) return;
+      firedAt = now;
+      cancelPress();
+      Actions.messageMenu(msg);
+    };
     const startPress = () => {
-      timer = setTimeout(() => Actions.messageMenu(msg), 480);
+      cancelPress();
+      timer = setTimeout(fireMenu, 480);
     };
     const cancelPress = () => {
       if (timer) clearTimeout(timer);
@@ -883,9 +898,10 @@ const Render = (() => {
     node.addEventListener('touchstart', startPress, { passive: true });
     node.addEventListener('touchend', cancelPress);
     node.addEventListener('touchmove', cancelPress, { passive: true });
+    node.addEventListener('touchcancel', cancelPress);
     node.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
-      Actions.messageMenu(msg);
+      fireMenu();
     });
   };
 

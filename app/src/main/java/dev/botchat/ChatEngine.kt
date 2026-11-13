@@ -202,20 +202,26 @@ object ChatEngine {
                             modelDone = true
                             break
                         }
-                        Quota.markLimited(
-                            context,
-                            candidateProvider.id,
-                            candidateModel,
-                            outcome.retryAfterMs
-                        )
-                        if (key != null) {
+                        // «Запрос не выполнялся» — это временная перегрузка канала,
+                        // а не исчерпание модели: не помечаем её лимитом, а ждём и повторяем.
+                        val notExecuted = outcome.error.contains("не выполнялся", ignoreCase = true) ||
+                            outcome.error.contains("not_executed", ignoreCase = true) ||
+                            outcome.error.contains("не выполнен", ignoreCase = true) ||
+                            outcome.error.contains("was not executed", ignoreCase = true)
+                        if (!notExecuted) {
+                            Quota.markLimited(
+                                context,
+                                candidateProvider.id,
+                                candidateModel,
+                                (outcome.retryAfterMs.takeIf { it > 0 } ?: 8_000L)
+                            )
+                        }
+                        if (key != null && attemptKeys.size > 1) {
                             exhaustedKeys.add(key)
                             Secrets.rotate(context, candidateProvider.id, key)
                             continue
                         }
-                        // Бесплатная модель без ключа: ждать её бессмысленно,
-                        // сразу пробуем следующую доступную.
-                        modelDone = true
+                        // Один ключ: ждём и пробуем ту же модель в следующей волне.
                         break
                     }
                     if (!outcome.retryable) {
@@ -263,8 +269,9 @@ object ChatEngine {
 
     private fun quotaWait(retryAfterMs: Long, wave: Int): Long {
         if (retryAfterMs > 0) return retryAfterMs.coerceIn(1_000, 900_000)
-        val backoff = 2_000L * (1L shl (wave - 1).coerceAtMost(4))
-        return backoff.coerceAtMost(30_000)
+        // Провайдер просит «5–10 секунд»: ждём с запасом, но не дольше 20 с.
+        val backoff = 6_000L * wave
+        return backoff.coerceIn(2_000, 20_000)
     }
 
     private fun sleepCancellable(run: Run, ms: Long): Boolean {
