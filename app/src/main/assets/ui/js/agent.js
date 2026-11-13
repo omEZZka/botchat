@@ -98,10 +98,19 @@ const Agent = (() => {
       streaming: true, tools: [],
     });
     try {
-      if (mode === 'chat') {
-        await streamOnce(chatId, assistantMsg, { tools: false, attachments: latestAttachments(chatId) });
+      const lastUser = (Store.messages(chatId) || []).filter((m) => m.role === 'user').pop();
+      const plainTalk = lastUser ? !needsTools(lastUser.text) : false;
+      if (mode === 'chat' || plainTalk) {
+        // Простая реплика — обычный ответ без инструментов и без «плана».
+        await streamOnce(chatId, assistantMsg, {
+          tools: false,
+          attachments: latestAttachments(chatId),
+          smallTalk: plainTalk,
+        });
       } else if (mode === 'plan') {
-        await streamOnce(chatId, assistantMsg, { tools: false, planOnly: true, attachments: latestAttachments(chatId) });
+        await streamOnce(chatId, assistantMsg, {
+          tools: false, planOnly: true, attachments: latestAttachments(chatId),
+        });
       } else {
         await agentLoop(chatId, assistantMsg);
       }
@@ -279,7 +288,8 @@ const Agent = (() => {
 
   const buildContext = (chatId, options) => {
     const chat = Store.getChat(chatId);
-    if (active && active.context) {
+    if (active && active.context && active.context.length > 0) {
+      // Внутри агентского цикла контекст уже собран с tool_calls — берём его как есть.
       const system = systemPrompt(chat, options || {});
       return { system, history: active.context.slice(), chat };
     }
@@ -293,20 +303,64 @@ const Agent = (() => {
     return { system, history, chat };
   };
 
+  /**
+   * Системная инструкция. Приоритет — обычный разговор.
+   * Инструменты упоминаются как возможность, а не как обязательный сценарий:
+   * иначе модель на «привет» отвечает «дай задание» и начинает «план».
+   */
   const systemPrompt = (chat, options) => {
-    const folder = chat.projectFolder || 'папка чата';
+    const folder = chat.projectFolder || '';
     const lines = [
-      'Ты — botCHAT, агент в мобильном мессенджере. Работаешь в песочнице проекта: ' + folder + '.',
-      'Доступные инструменты: read, write, edit, bash, grep, glob, list, webfetch, todo, task.',
-      'Правила: сначала составь короткий план, затем вызывай инструменты по одному. Не выдумывай содержимое файлов — читай их.',
-      'Опасные действия (bash, запись/правка вне проекта, сеть) требуют подтверждения пользователя.',
-      'Отвечай кратко и по делу на языке пользователя. Форматируй код в блоках с указанием языка.',
+      'Ты — botCHAT, помощник в мобильном мессенджере.',
+      'Общайся как обычный собеседник: отвечай на вопрос по существу, коротко и дружелюбно.',
+      'Не предлагай задачи, не проси «дать задание» и не начинай план, если пользователь просто здоровается или спрашивает о тебе.',
+      folder
+        ? 'Инструменты (read, write, edit, bash, grep, glob, list, webfetch, todo, task) доступны, но нужны только когда пользователь просит что-то сделать с файлами проекта (' + folder + ') или выполнить команду.'
+        : 'Инструменты (read, write, edit, bash, grep, glob, list, webfetch, todo, task) доступны, но нужны только когда пользователь явно просит работу с файлами или команды.',
+      'Перед изменением файлов сначала прочитай их. Не выдумывай содержимое.',
+      'Опасные действия (bash, запись, сеть) требуют подтверждения пользователя.',
+      'Отвечай на языке пользователя. Код оформляй блоками с указанием языка.',
     ];
-    if (options.planOnly) lines.push('Режим «план»: только план, без вызова инструментов.');
-    if (options.tools === false) lines.push('Режим «чат»: инструменты недоступны, только ответ текстом.');
-    return lines.join('\n');
+    if (options.planOnly) {
+      lines.push('Сейчас режим «план»: составь план работ, инструменты не вызывай.')
+    }
+    if (options.tools === false) {
+      lines.push('Инструменты в этом ответе недоступны: ответь обычным текстом.')
+    }
+    if (options.smallTalk) {
+      lines.push('Это обычный разговор. Ответь прямо на реплику, без плана и без предложения задач.')
+    }
+    return lines.join('\n')
   };
 
+  /**
+   * Нужны ли инструменты для этой реплики.
+   * Логика обратная: инструменты включаются только когда в тексте есть
+   * явная работа с проектом/командами. Всё остальное — обычный разговор.
+   */
+  const needsTools = (text) => {
+    const t = String(text || '').trim().toLowerCase();
+    if (!t) return false;
+    if (t.length > 400) return true;
+    const taskWords = [
+      'файл', 'папк', 'проект', 'репозитор', 'код', 'скрипт', 'конфиг',
+      'исправ', 'сделай', 'добав', 'удали', 'переимен', 'перемест',
+      'запусти', 'выполни', 'терминал', 'команд', 'bash', 'shell',
+      'git ', 'коммит', 'ветк', 'тест', 'рефактор', 'найди в', 'поиск по',
+      'создай', 'сгенерируй', 'проверь сборк', 'собери', 'установи', 'прочитай',
+      'открой файл', 'покажи файл', 'посмотри файл', 'проверь код',
+      'file', 'folder', 'project', 'code', 'fix', 'refactor', 'grep',
+      'run tests', 'build', 'install', 'read file', 'open file', '.js', '.ts',
+      '.kt', '.py', '.json', '.md', '/src', 'src/',
+    ];
+    if (taskWords.some((w) => t.includes(w))) return true;
+    // Явная просьба что-то сделать с проектом.
+    if (/\b(сделай|создай|измени|обнови|поправь|почини)\b/.test(t)) return true;
+    return false;
+  };
+
+  /** Совместимость с прежним именем: «просто разговор» = инструменты не нужны. */
+  const isSmallTalk = (text) => !needsTools(text);
   const streamOnce = async (chatId, message, options) => {
     const ctx = buildContext(chatId, options);
     const chat = ctx.chat;
@@ -585,7 +639,8 @@ const Agent = (() => {
 
   return {
     send, run, stop, togglePause, flushQueue, continueGeneration, regenerate,
-    executeTool, cancelActive, contextUsage,
+    executeTool, cancelActive, contextUsage, isSmallTalk, needsTools,
+    systemPrompt, buildContext,
     get active() { return active; },
   };
 })();
