@@ -36,7 +36,7 @@ const ProvidersUI = (() => {
 
   const providerCard = (provider) => {
     const card = U.el('article', { class: 'provider-card', 'data-provider': provider.id });
-    const status = provider.hasKey ? 'ключ есть' : (provider.needsKey ? 'ключа нет' : 'без ключа');
+    const status = provider.hasKey ? 'ключ есть' : (provider.needsKey ? 'ключа нет' : 'локальный сервер');
     card.appendChild(U.el('div', { class: 'provider-row' }, [
       U.el('span', { class: 'health-dot ' + (provider.hasKey || !provider.needsKey ? 'ok' : 'bad'), title: status }),
       U.el('div', { class: 'provider-main' }, [
@@ -336,7 +336,7 @@ const ProvidersUI = (() => {
       grouped.forEach((models, providerId) => {
         const provider = S.providers.find((p) => p.id === providerId);
         const limited = (S.quota || {})['@account|' + providerId];
-        const label = (provider ? provider.name : providerId) + (!provider || !provider.needsKey ? ' · free' : '');
+        const label = provider ? provider.name : providerId;
         const head = U.el('div', { class: 'model-group-label' }, [
           U.el('span', { text: label }),
           limited ? U.el('span', {
@@ -390,7 +390,7 @@ const ProvidersUI = (() => {
     const content = U.el('div', { class: 'quota-sheet' });
     content.appendChild(U.el('p', {
       class: 'muted small',
-      text: 'Лимиты бесплатных моделей соблюдаются: при 429 приложение ждёт подсказку провайдера и продолжает диалог на следующей доступной модели. Здесь видно, кто на паузе.',
+      text: 'Если провайдер вернул 429, приложение ждёт подсказку и пробует резервные модели из цепочки. Здесь видно, кто на паузе.',
     }));
     const list = U.el('div', { class: 'quota-list' });
     const limited = (res && res.limited) || {};
@@ -422,18 +422,7 @@ const ProvidersUI = (() => {
       ]));
     });
     content.appendChild(list);
-    content.appendChild(U.el('button', {
-      class: 'btn primary full', text: 'Продолжать на бесплатных',
-      onclick: () => {
-        Store.setSetting('autoFree', true);
-        Render.closeSheet();
-        Render.toast('Автопереключение бесплатных моделей включено');
-      },
-    }));
-    content.appendChild(U.el('p', {
-      class: 'muted small',
-      text: 'Автопереключение сейчас: ' + (S.settings.autoFree !== false ? 'включено' : 'выключено'),
-    }));
+
     Render.openSheet({ title: 'Квоты и лимиты', content });
   };
 

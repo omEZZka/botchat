@@ -138,17 +138,6 @@ object SubAgentRunner {
         if (errorText.contains("429") || errorText.contains("лимит", ignoreCase = true)) {
             Quota.markAccountLimited(context, providerId, 600_000L)
         }
-        // Резерв: бесплатные провайдеры без ключа, доступные сразу.
-        for (provider in Providers.all(context).filter {
-            !it.needsKey && it.id != "ollama" && it.id != "lmstudio" && it.id != "llamacpp"
-        }) {
-            if (provider.id == providerId) continue
-            if (Quota.accountRemaining(context, provider.id) > 0) continue
-            for (candidate in Providers.defaultModels(provider.id)) {
-                val res = attempt(context, provider.id, candidate.id, prompt)
-                if (res.optBoolean("ok")) return res
-            }
-        }
         return first
     }
 

@@ -1349,3 +1349,173 @@ mark { background: var(--acc); color: #0b0e13; border-radius: 3px; padding: 0 2p
   letter-spacing: 0;
   text-transform: none;
 }
+
+/* ---------- многослойные шторки ---------- */
+
+.sheet {
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, filter 180ms ease;
+  will-change: transform;
+}
+.sheet.stacked {
+  transform: translateY(-14px) scale(0.965);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.sheet.full {
+  border-radius: 0;
+  top: 0;
+  max-height: 100%;
+  height: 100%;
+}
+.sheet.full .sheet-body { padding-top: 8px; }
+.sheet-backdrop.layer-1 { background: rgba(0, 0, 0, 0.45); }
+.sheet-backdrop.layer-2 { background: rgba(0, 0, 0, 0.35); }
+.sheet-backdrop.layer-3 { background: rgba(0, 0, 0, 0.28); }
+.sheet-backdrop.stacked { opacity: 0.35; }
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 52px;
+  padding: 4px 8px;
+}
+.sheet-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 16.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-headspacer, .sheet-head-spacer { width: 38px; flex: 0 0 auto; }
+
+/* ---------- Telegram-подобный список ---------- */
+
+.list-screen .topbar {
+  padding-left: 12px;
+  border-bottom: none;
+  min-height: 58px;
+}
+.brand-mark { display: none; }
+.brand-name { font-size: 21px; font-weight: 680; letter-spacing: 0.2px; }
+
+.chat-row-inner { padding: 11px 14px; gap: 13px; }
+.avatar { width: 54px; height: 54px; font-size: 17px; }
+.chat-title { font-size: 15.5px; }
+.chat-time { font-size: 11.5px; }
+.chat-preview { font-size: 13.5px; }
+
+/* закреплённый чат в Telegram помечен не бейджем, а иконкой у времени */
+.pin-mark {
+  position: static;
+  width: auto;
+  height: auto;
+  border: none;
+  background: none;
+  color: var(--mut);
+  display: inline-flex;
+}
+
+/* поисковая строка как в Telegram */
+.search-bar {
+  border-radius: 10px;
+  background: var(--bg-3);
+  border: none;
+  margin: 4px 10px 10px;
+}
+.search-input { min-height: 38px; font-size: 15px; }
+
+/* ---------- экран чата ---------- */
+
+.chat-top { border-bottom: 1px solid var(--line); background: var(--bg-2); }
+.chat-head-main { cursor: pointer; }
+.chat-head-content { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.chat-head-title { font-size: 16px; font-weight: 600; }
+.chat-head-sub { font-size: 12.5px; max-width: none; }
+
+.messages {
+  padding: 8px 8px 4px;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(91, 140, 255, 0.055), transparent 42%),
+    radial-gradient(circle at 82% 78%, rgba(138, 107, 255, 0.05), transparent 45%),
+    var(--bg);
+}
+
+.bubble {
+  padding: 6px 10px 5px;
+  border-radius: 13px 13px 13px 4px;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.12);
+}
+.msg.user .bubble { border-radius: 13px 13px 4px 13px; }
+.msg.tail-same .bubble { border-top-left-radius: 5px; }
+.msg.user.tail-same .bubble { border-top-right-radius: 5px; border-top-left-radius: 13px; }
+
+.msg-meta { margin: 1px 5px 0; }
+.msg.user .msg-meta { flex-direction: row; align-items: center; gap: 4px; }
+.msg.user .msg-meta .reply-quote { display: none; }
+
+.date-sep {
+  background: color-mix(in srgb, var(--bg-3) 78%, transparent);
+  backdrop-filter: blur(4px);
+  font-size: 11.5px;
+  padding: 3px 11px;
+  border-radius: 11px;
+  margin: 12px auto 9px;
+}
+
+/* композер Telegram */
+.composer { border-top: none; padding: 4px 6px calc(6px + var(--safe-bottom)); }
+.composer-field {
+  border-radius: 20px;
+  background: var(--bg-2);
+  border-color: transparent;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+.composer-send { width: 44px; height: 44px; box-shadow: 0 2px 8px rgba(91, 140, 255, 0.28); }
+
+/* таббар Telegram: без подписей у активного, с индикатором */
+.tabbar { border-top: 1px solid var(--line); background: var(--bg-2); }
+.tab { min-height: 56px; font-size: 10.5px; gap: 2px; }
+.tab.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: var(--acc);
+}
+
+/* FAB как в Telegram — круглая с тенью */
+.fab {
+  border-radius: 50%;
+  width: 56px;
+  height: 56px;
+  background: var(--acc);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42), 0 2px 6px rgba(91, 140, 255, 0.35);
+}
+
+/* настройки: секции карточками */
+.settings-list {
+  margin: 8px 10px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.settings-row { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.settings-row:last-child { border-bottom: none; }
+.settings-row > .icon { transform: rotate(180deg); opacity: 0.55; }
+.profile-card { margin: 10px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); }
+
+/* мягкое появление экранов */
+.screen { animation: screen-in 160ms ease; }
+@keyframes screen-in {
+  from { opacity: 0.4; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+:root[data-motion='reduced'] .screen { animation: none; }

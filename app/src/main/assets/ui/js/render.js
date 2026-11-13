@@ -81,32 +81,53 @@ const Render = (() => {
   const openSheet = (options) => {
     const opts = options || {};
     const host = sheetHost();
-    const sheet = U.el('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true' });
+    const depth = S.sheets.length;
+    const sheet = U.el('div', {
+      class: 'sheet' + (opts.full ? ' full' : ''),
+      role: 'dialog', 'aria-modal': 'true',
+      'data-sheet': 'sheet-' + (depth + 1),
+    });
     if (opts.title) {
       sheet.appendChild(U.el('div', { class: 'sheet-head' }, [
+        iconButton(opts.full ? 'back' : 'close', opts.full ? 'Назад' : 'Закрыть', () => closeSheet()),
         U.el('span', { class: 'sheet-title', text: opts.title }),
-        iconButton('close', 'Закрыть', () => closeSheet()),
+        U.el('span', { class: 'sheet-head-spacer' }),
       ]));
     }
     const body = U.el('div', { class: 'sheet-body' });
     if (opts.content) body.appendChild(opts.content);
     sheet.appendChild(body);
-    const backdrop = U.el('div', { class: 'sheet-backdrop', onclick: () => closeSheet() });
+    const backdrop = U.el('div', {
+      class: 'sheet-backdrop layer-' + depth,
+      onclick: () => closeSheet(),
+    });
     host.appendChild(backdrop);
     host.appendChild(sheet);
     requestAnimationFrame(() => {
       sheet.classList.add('open');
       backdrop.classList.add('open');
     });
-    S.sheets.push(sheet);
+    const entry = { sheet, backdrop, options: opts };
+    S.sheets.push(entry);
+    if (depth > 0) {
+      const below = S.sheets[depth - 1];
+      if (below && below.sheet) below.sheet.classList.add('stacked');
+      if (below && below.backdrop) below.backdrop.classList.add('stacked');
+    }
+    Bus.emit('nav:changed', S.nav);
     bindDrag(sheet, backdrop);
     return sheet;
   };
 
   const closeSheet = () => {
-    const host = sheetHost();
-    const sheet = host.querySelector('.sheet.open');
-    const backdrop = host.querySelector('.sheet-backdrop.open');
+    const entry = S.sheets.pop();
+    if (!entry) {
+      const host = sheetHost();
+      U.$$('.sheet', host).forEach((n) => n.remove());
+      U.$$('.sheet-backdrop', host).forEach((n) => n.remove());
+      return;
+    }
+    const { sheet, backdrop } = entry;
     if (sheet) {
       sheet.classList.remove('open');
       sheet.dataset.closing = '1';
@@ -116,8 +137,15 @@ const Render = (() => {
       if (sheet && sheet.dataset.closing) sheet.remove();
       if (backdrop) backdrop.remove();
     }, 180);
-    S.sheets = [];
+    const below = S.sheets[S.sheets.length - 1];
+    if (below) {
+      if (below.sheet) below.sheet.classList.remove('stacked');
+      if (below.backdrop) below.backdrop.classList.remove('stacked');
+    }
+    Bus.emit('nav:changed', S.nav);
   };
+
+  const hasSheet = () => S.sheets.length > 0;
 
   const bindDrag = (sheet, backdrop) => {
     let startY = 0;
@@ -167,6 +195,7 @@ const Render = (() => {
       Accent.apply();
       const view = U.$('#view');
       if (!view) return;
+      document.documentElement.dataset.depth = String(S.sheets.length + (S.screen === 'chat' ? 1 : 0));
       if (S.screen === 'chat' && S.chatId) {
         renderChat(view);
       } else if (S.route === 'search') {
@@ -380,7 +409,7 @@ const Render = (() => {
       header.appendChild(iconButton('back', 'Назад', () => Actions.back()));
       header.appendChild(U.el('div', { class: 'chat-head-main', onclick: () => Actions.openChatSheet() }, [
         avatar(chat.title, chat.color, 1),
-        U.el('div', { class: 'chat-head-text' }, [
+        U.el('div', { class: 'chat-head-content' }, [
           U.el('span', { class: 'chat-head-title', text: chat.title }),
           U.el('span', { class: 'chat-head-sub', id: 'chat-sub', text: chatSub(chat) }),
         ]),
@@ -855,6 +884,7 @@ const Render = (() => {
     U.clear(view);
     const section = U.el('section', { class: 'screen search-screen' });
     section.appendChild(U.el('header', { class: 'topbar' }, [
+      iconButton('back', t('common.back'), () => Actions.go('chats')),
       U.el('h1', { class: 'screen-title', text: t('search.title') }),
     ]));
     const input = U.el('input', {
@@ -1009,7 +1039,7 @@ const Render = (() => {
   };
 
   return {
-    bind, render, openSheet, closeSheet, toast, confirm, prompt,
+    bind, render, openSheet, closeSheet, hasSheet, toast, confirm, prompt,
     avatar, iconButton, MD, scrollToBottom, renderProgress,
     statusText, toolCard, sheetHost,
   };

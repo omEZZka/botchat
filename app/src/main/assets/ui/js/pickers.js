@@ -140,9 +140,6 @@ const Pickers = (() => {
     content.appendChild(toggleRow('Отправка по Enter', S.settings.sendOnEnter, (v) => Store.setSetting('sendOnEnter', v)));
     content.appendChild(toggleRow('Уведомления', S.settings.notifications, (v) => Store.setSetting('notifications', v)));
     content.appendChild(toggleRow('Звуки', S.settings.sounds, (v) => Store.setSetting('sounds', v)));
-    content.appendChild(toggleRow('Продолжать на бесплатных моделях', S.settings.autoFree !== false, (v) => {
-      Store.setSetting('autoFree', v);
-    }));
     content.appendChild(toggleRow('Плавающий индикатор', S.settings.overlay, async (v) => {
       const res = await Native.api(v ? 'overlay.show' : 'overlay.hide');
       if (res && res.ok) {

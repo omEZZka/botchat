@@ -8,6 +8,7 @@ const Settings2 = (() => {
     U.clear(view);
     const section = U.el('section', { class: 'screen settings-screen' });
     section.appendChild(U.el('header', { class: 'topbar' }, [
+      Render.iconButton('back', t('common.back'), () => Actions.go('chats')),
       U.el('h1', { class: 'screen-title', text: t('settings.title') }),
     ]));
 

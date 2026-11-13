@@ -1,8 +1,32 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp" android:height="108dp"
-    android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#5B8CFF"
-        android:pathData="M30,30h48a8,8 0 0 1 8,8v26a8,8 0 0 1 -8,8h-18l-16,12v-12h-14a8,8 0 0 1 -8,-8v-26a8,8 0 0 1 8,-8z" />
-    <path android:fillColor="#0F1216"
-        android:pathData="M44,48h20v6h-20zM44,38h20v6h-20z" />
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- пузырь сообщения с градиентом -->
+    <path
+        android:pathData="M31,30h46a9,9 0 0 1 9,9v24a9,9 0 0 1 -9,9H58l-15,11.5V72H31a9,9 0 0 1 -9,-9V39a9,9 0 0 1 9,-9z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="24"
+                android:startY="30"
+                android:endX="84"
+                android:endY="80"
+                android:type="linear">
+                <item android:offset="0" android:color="#FF7FB2FF" />
+                <item android:offset="0.55" android:color="#FF5B8CFF" />
+                <item android:offset="1" android:color="#FF8A6BFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- курсор агента -->
+    <path
+        android:pathData="M42,44h10v7H42zM56,44h10v7H56z"
+        android:fillColor="#0B0F16" />
+    <path
+        android:pathData="M56,58h10v6H56z"
+        android:fillColor="#0B0F16" />
 </vector>

@@ -22,8 +22,7 @@ object ChatEngine {
     /** Сколько раз повторяем упёршуюся в квоту модель, прежде чем идти по fallback. */
     private const val QUOTA_WAVES = 3
 
-    /** Локальные серверы не подставляем автоматически: без запущенного сервера это лишь задержка. */
-    private val LOCAL_PROVIDERS = setOf("ollama", "lmstudio", "llamacpp")
+
 
     fun start(context: Context, payload: JSONObject): JSONObject {
         val chatId = payload.optString("chatId")
@@ -118,29 +117,6 @@ object ChatEngine {
                     candidates.add(p to mid)
                 }
             }
-        }
-
-        // Бесплатные модели подключаются автоматически: при квоте диалог
-        // продолжается на следующей доступной, а не обрывается.
-        if (payload.optBoolean("autoFree", true)) {
-            Providers.all(context)
-                .filter { !it.needsKey && it.id != provider.id && it.id !in LOCAL_PROVIDERS }
-                .forEach { freeProvider ->
-                    val models = Providers.defaultModels(freeProvider.id)
-                    val cached = Models.cached(context)
-                    val fromCache = ArrayList<String>()
-                    for (i in 0 until cached.length()) {
-                        val item = cached.getJSONObject(i)
-                        if (item.optString("provider") == freeProvider.id) {
-                            fromCache.add(item.optString("id"))
-                        }
-                    }
-                    (fromCache.ifEmpty { models.map { it.id } }).forEach { model ->
-                        if (candidates.none { it.first.id == freeProvider.id && it.second == model }) {
-                            candidates.add(freeProvider to model)
-                        }
-                    }
-                }
         }
 
         var lastRetryAfter = -1L

@@ -378,7 +378,6 @@ const Agent = (() => {
       maxSteps: active ? active.limit : 1,
       step: options.toolStep || 0,
       fallbackModels: fallback,
-      autoFree: S.settings.autoFree !== false,
       images: options.images || [],
     });
     if (!res || !res.ok) {

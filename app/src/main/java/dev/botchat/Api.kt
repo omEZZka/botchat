@@ -204,35 +204,8 @@ object Models {
 
     fun cached(context: Context): JSONArray {
         val f = file(context)
-        val stored = if (!f.exists()) JSONArray() else
-            runCatching { JSONArray(f.readText()) }.getOrDefault(JSONArray())
-        return withFreeDefaults(context, stored)
-    }
-
-    /**
-     * Бесплатные провайдеры должны быть доступны сразу, без ключа и без сети:
-     * иначе при первом запуске список моделей пуст и выбрать нечего.
-     */
-    private fun withFreeDefaults(context: Context, stored: JSONArray): JSONArray {
-        if (stored.length() > 0) return stored
-        val out = JSONArray()
-        Providers.all(context)
-            .filter { !it.needsKey && it.id != "ollama" && it.id != "lmstudio" && it.id != "llamacpp" }
-            .forEach { provider ->
-                Providers.defaultModels(provider.id).forEach { model ->
-                    out.put(
-                        JSONObject()
-                            .put("id", model.id)
-                            .put("name", model.name)
-                            .put("provider", provider.id)
-                            .put("context", model.context)
-                            .put("reasoning", model.reasoning)
-                            .put("vision", model.vision)
-                            .put("free", true)
-                    )
-                }
-            }
-        return out
+        if (!f.exists()) return JSONArray()
+        return runCatching { JSONArray(f.readText()) }.getOrDefault(JSONArray())
     }
 
     fun save(context: Context, models: JSONArray) {
@@ -271,31 +244,9 @@ object Models {
             }
         }
         if (result.length() > 0) save(context, result)
-        val merged = result
-        // Гарантируем наличие бесплатных моделей даже если сеть отдала пустой список.
-        val known = HashSet<String>()
-        for (i in 0 until merged.length()) {
-            val m = merged.getJSONObject(i)
-            known.add(m.optString("provider") + "|" + m.optString("id"))
-        }
-        Providers.all(context).filter { !it.needsKey }.forEach { provider ->
-            Providers.defaultModels(provider.id).forEach { model ->
-                if (!known.contains(provider.id + "|" + model.id)) {
-                    merged.put(
-                        JSONObject()
-                            .put("id", model.id)
-                            .put("name", model.name)
-                            .put("provider", provider.id)
-                            .put("context", model.context)
-                            .put("reasoning", model.reasoning)
-                            .put("free", true)
-                    )
-                }
-            }
-        }
         return JSONObject()
             .put("ok", true)
-            .put("models", if (merged.length() > 0) merged else cached(context))
+            .put("models", if (result.length() > 0) result else cached(context))
             .put("errors", errors)
     }
 }

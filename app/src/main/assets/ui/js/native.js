@@ -76,12 +76,20 @@ const Native = (() => {
   window.BCEmit = emit;
 
   window.BCNative = {
+    /**
+     * Возвращает true, если навигация обработана внутри приложения.
+     * Возврат идёт строкой: так его читает evaluateJavascript на стороне Android.
+     */
     onBack: () => {
-      const handled = typeof App !== 'undefined' && App.handleBack && App.handleBack();
-      return handled === true;
+      try {
+        return window.Actions && window.Actions.handleBack ? window.Actions.handleBack() === true : false;
+      } catch (err) {
+        console.error('back failed', err);
+        return false;
+      }
     },
     onIntent: (action, chatId) => {
-      if (typeof App !== 'undefined' && App.handleIntent) App.handleIntent(action, chatId);
+      if (window.Actions && window.Actions.handleIntent) window.Actions.handleIntent(action, chatId);
     },
   };
 

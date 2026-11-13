@@ -32,6 +32,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import android.app.Activity
+import androidx.activity.OnBackPressedCallback
 import androidx.core.content.ContextCompat
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONArray
@@ -451,17 +452,27 @@ class MainActivity : Activity(), BridgeHost {
         }
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
+    /**
+     * Системная кнопка «Назад» идёт в web-навигацию: сначала закрываются шторки,
+     * затем возврат из чата/раздела. Выход — только когда стек пуст.
+     */
+    private fun handleBackPressed() {
         if (!::web.isInitialized) {
-            super.onBackPressed()
+            finish()
             return
         }
-        web.evaluateJavascript("(window.BCNative && window.BCNative.onBack && window.BCNative.onBack())") { handled ->
-            if (handled != "true") {
+        web.evaluateJavascript(
+            "window.BCNative && window.BCNative.onBack ? " +
+                "(window.BCNative.onBack() ? '1' : '0') : '0'"
+        ) { handled ->
+            if (handled != "\"1\"" && handled != "1") {
                 runOnUiThread { finish() }
             }
         }
+    }
+
+    override fun onBackPressed() {
+        handleBackPressed()
     }
 
     override fun onDestroy() {

@@ -6,8 +6,13 @@
  */
 const Actions = (() => {
   const go = (route) => {
+    if (S.route === route && S.screen !== 'chat') return;
     S.route = route;
-    if (route !== 'chats' && S.screen === 'chat') S.screen = 'list';
+    if (route !== 'chats' && S.screen === 'chat') {
+      S.screen = 'list';
+      S.chatId = null;
+    }
+    Store.navReset({ name: route });
     if (route === 'search') Store.search(S.search.query || '');
     Bus.emit('render');
   };
@@ -38,12 +43,20 @@ const Actions = (() => {
   };
 
   const back = () => {
+    if (Render.hasSheet()) {
+      Render.closeSheet();
+      return true;
+    }
+    if (Store.navPop()) return true;
     if (S.screen === 'chat') {
       Store.closeChat();
-      Render.render();
-      return;
+      return true;
     }
-    go('chats');
+    if (S.route !== 'chats') {
+      go('chats');
+      return true;
+    }
+    return false;
   };
 
   const togglePin = async (chatId) => {
@@ -236,6 +249,13 @@ const Actions = (() => {
     Pickers.chatSettings();
   };
 
+  const openSettingsSection = (name) => {
+    Store.navPush({ name: 'settings', section: name });
+    S.route = 'settings';
+    S.screen = 'list';
+    Bus.emit('render');
+  };
+
   const openAppMenu = () => {
     Pickers.appMenu();
   };
@@ -266,19 +286,13 @@ const Actions = (() => {
   };
 
   const handleBack = () => {
-    if (U.$('#sheet-host .sheet.open')) {
-      Render.closeSheet();
+    const onboarding = U.$('#sheet-host .onboarding');
+    if (onboarding) {
+      const skip = onboarding.querySelector('.onboarding-skip');
+      if (skip) skip.click();
       return true;
     }
-    if (S.screen === 'chat') {
-      back();
-      return true;
-    }
-    if (S.route !== 'chats') {
-      go('chats');
-      return true;
-    }
-    return false;
+    return back() === true;
   };
 
   const handleIntent = async (action, chatId) => {
@@ -299,7 +313,7 @@ const Actions = (() => {
     go, newChat, openChat, openChatAt, back, togglePin, toggleArchive, confirmDelete,
     openAttachment, replyTo, messageMenu, openChatMenu, openChatSheet, openAppMenu,
     openModelSheet, compactSession, openTaskGraph, resolvePermission, handleBack,
-    handleIntent, sendPendingReply, forwardMessage,
+    handleIntent, sendPendingReply, forwardMessage, openSettingsSection,
   };
 })();
 

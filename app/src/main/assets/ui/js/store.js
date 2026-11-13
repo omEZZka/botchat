@@ -55,7 +55,6 @@ const Settings = (() => {
     sendOnEnter: false,
     windowSize: 60,
     fallbackChain: [],
-    autoFree: true,
     compact: false,
     overlay: false,
     rootfsUrl: '',
@@ -86,6 +85,7 @@ const S = {
   booted: false,
   route: 'chats',
   screen: 'list',
+  nav: [{ name: 'list' }],
   chatId: null,
   chats: [],
   messages: new Map(),
@@ -370,6 +370,32 @@ const Store = (() => {
     Bus.emit('state:ready', S);
   };
 
+  const navTop = () => S.nav[S.nav.length - 1] || { name: 'list' };
+
+  const navPush = (entry) => {
+    S.nav.push(entry);
+    S.screen = entry.name === 'chat' ? 'chat' : 'screen';
+    Bus.emit('nav:changed', S.nav);
+    Bus.emit('render');
+  };
+
+  const navReset = (entry) => {
+    S.nav = [entry];
+    S.screen = entry.name === 'chat' ? 'chat' : 'screen';
+    Bus.emit('nav:changed', S.nav);
+    Bus.emit('render');
+  };
+
+  const navPop = () => {
+    if (S.nav.length <= 1) return false;
+    S.nav.pop();
+    const top = navTop();
+    S.screen = top.name === 'chat' ? 'chat' : (top.name === 'list' ? 'list' : 'screen');
+    Bus.emit('nav:changed', S.nav);
+    Bus.emit('render');
+    return true;
+  };
+
   const compareChats = (a, b) => {
     if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
     return (b.updatedAt || 0) - (a.updatedAt || 0);
@@ -428,6 +454,11 @@ const Store = (() => {
     S.chatId = id;
     S.screen = 'chat';
     S.route = 'chats';
+    if (opts.initial || S.nav.length === 0) {
+      S.nav = [{ name: 'list' }, { name: 'chat', chatId: id }];
+    } else if (navTop().name !== 'chat' || navTop().chatId !== id) {
+      S.nav.push({ name: 'chat', chatId: id });
+    }
     if (!S.messages.has(id)) {
       await Db.messagesOfChat(id, (rows) => {
         const sorted = (rows || []).sort((a, b) => a.ts - b.ts);
@@ -446,8 +477,11 @@ const Store = (() => {
   };
 
   const closeChat = () => {
+    while (S.nav.length > 1 && navTop().name !== 'list') S.nav.pop();
     S.screen = 'list';
     S.chatId = null;
+    if (!S.nav.length) S.nav = [{ name: 'list' }];
+    Bus.emit('nav:changed', S.nav);
     Bus.emit('render');
   };
 
@@ -662,6 +696,10 @@ const Store = (() => {
 
   return {
     load,
+    navTop,
+    navPush,
+    navPop,
+    navReset,
     createChat,
     getChat,
     openChat,
