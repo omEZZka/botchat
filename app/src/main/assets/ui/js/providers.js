@@ -272,6 +272,19 @@ const ProvidersUI = (() => {
         if (!grouped.has(providerId)) grouped.set(providerId, []);
         grouped.get(providerId).push(model);
       });
+      // Бесплатные и доступные провайдеры — выше.
+      const providerRank = (id) => {
+        const provider = S.providers.find((p) => p.id === id);
+        const accountLimited = (S.quota || {})['@account|' + id];
+        if (!provider) return 2;
+        if (accountLimited) return 3;
+        return provider.needsKey && !provider.hasKey ? 2 : 0;
+      };
+      const groupEntries = Array.from(grouped.entries()).sort(
+        (a, b) => providerRank(a[0]) - providerRank(b[0]) || a[0].localeCompare(b[0])
+      );
+      grouped.clear();
+      groupEntries.forEach(([id, models]) => grouped.set(id, models));
       if (!grouped.size) {
         list.appendChild(U.el('p', { class: 'muted small', text: 'Модели не загружены. Проверьте провайдера в настройках.' }));
         return;

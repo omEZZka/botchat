@@ -22,6 +22,9 @@ object ChatEngine {
     /** Сколько раз повторяем упёршуюся в квоту модель, прежде чем идти по fallback. */
     private const val QUOTA_WAVES = 3
 
+    /** Локальные серверы не подставляем автоматически: без запущенного сервера это лишь задержка. */
+    private val LOCAL_PROVIDERS = setOf("ollama", "lmstudio", "llamacpp")
+
     fun start(context: Context, payload: JSONObject): JSONObject {
         val chatId = payload.optString("chatId")
         val requestId = payload.optString("requestId")
@@ -121,7 +124,7 @@ object ChatEngine {
         // продолжается на следующей доступной, а не обрывается.
         if (payload.optBoolean("autoFree", true)) {
             Providers.all(context)
-                .filter { !it.needsKey && it.id != provider.id }
+                .filter { !it.needsKey && it.id != provider.id && it.id !in LOCAL_PROVIDERS }
                 .forEach { freeProvider ->
                     val models = Providers.defaultModels(freeProvider.id)
                     val cached = Models.cached(context)
@@ -140,7 +143,6 @@ object ChatEngine {
                 }
         }
 
-        var throttleWait = 0L
         var lastRetryAfter = -1L
         val ordered = Quota.order(context, candidates.map { it.first.id to it.second })
             .mapNotNull { pair -> candidates.firstOrNull { it.first.id == pair.first && it.second == pair.second } }
@@ -232,6 +234,9 @@ object ChatEngine {
                             Secrets.rotate(context, candidateProvider.id, key)
                             continue
                         }
+                        // Бесплатная модель без ключа: ждать её бессмысленно,
+                        // сразу пробуем следующую доступную.
+                        modelDone = true
                         break
                     }
                     if (!outcome.retryable) {
@@ -241,11 +246,10 @@ object ChatEngine {
                     break
                 }
                 if (succeeded || modelDone) break
-                // Все ключи/модель упёрлись в квоту: пауза и новая волна.
+                // Все ключи упёрлись в квоту: пауза и новая волна.
                 wave += 1
                 if (wave < QUOTA_WAVES) {
                     val wait = quotaWait(lastRetryAfter, wave)
-                    throttleWait += wait
                     emitNotice(
                         host,
                         requestId,
@@ -253,11 +257,6 @@ object ChatEngine {
                     )
                     if (!sleepCancellable(run, wait)) return
                 }
-            }
-            if (succeeded || modelDone) continue
-            if (candidates.lastOrNull() != candidateProvider to candidateModel && lastRetryAfter > 0) {
-                // Уходим на резервную модель, но помним, что основная была ограничена.
-                continue
             }
         }
         if (succeeded) {

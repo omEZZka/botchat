@@ -249,7 +249,9 @@ object Providers {
             val result = fetchModelsOnce(context, provider, key)
             if (result.isNotEmpty()) return result
         }
-        if (provider.id == "opencode") return defaultModels("opencode")
+        // Бесплатные провайдеры должны давать список даже без сети.
+        val fallback = defaultModels(provider.id)
+        if (fallback.isNotEmpty()) return fallback
         return emptyList()
     }
 

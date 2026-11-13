@@ -139,7 +139,9 @@ object SubAgentRunner {
             Quota.markAccountLimited(context, providerId, 600_000L)
         }
         // Резерв: бесплатные провайдеры без ключа, доступные сразу.
-        for (provider in Providers.all(context).filter { !it.needsKey }) {
+        for (provider in Providers.all(context).filter {
+            !it.needsKey && it.id != "ollama" && it.id != "lmstudio" && it.id != "llamacpp"
+        }) {
             if (provider.id == providerId) continue
             if (Quota.accountRemaining(context, provider.id) > 0) continue
             for (candidate in Providers.defaultModels(provider.id)) {
