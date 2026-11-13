@@ -19,7 +19,7 @@ object Throttle {
     private val lastHint = ConcurrentHashMap<String, Long>()
 
     fun interval(providerId: String): Long {
-        val hinted = lastHint[providerId]?.get() ?: 0L
+        val hinted = lastHint[providerId] ?: 0L
         return maxOf(DEFAULT_INTERVAL_MS, hinted)
     }
 
